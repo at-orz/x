@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['**/v[0-9]*']
+  # Re-runs the release for a tag that is already pushed, after a fix to this
+  # workflow. Never move or re-push the tag itself: see docs/release.md.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag, e.g. auth/v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # Full history and tags: gorelease compares against the previous tag.
+          fetch-depth: 0
+      # checkout can leave the triggering tag lightweight; re-fetch the real
+      # tag object so the annotated-tag assertion sees what was pushed.
+      - run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop path:./.nix -c scripts/release.sh --verify "$TAG"
+      - name: Create GitHub release
+        run: |
+          source scripts/lib.sh
+          split_tag "$TAG"
+          changelog_section "$TAG_DIR" "$TAG_VERSION" >"$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --verify-tag \
+            --title "$TAG_DIR v$TAG_VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+      # pkg.go.dev picks the version up from the proxy.
+      - name: Warm proxy.golang.org
+        run: |
+          source scripts/lib.sh
+          split_tag "$TAG"
+          cd "$RUNNER_TEMP"
+          GOWORK=off GOPROXY=https://proxy.golang.org nix develop "path:$GITHUB_WORKSPACE/.nix" -c \
+            go list -m "$MODULE_PREFIX/$TAG_DIR@v$TAG_VERSION"
