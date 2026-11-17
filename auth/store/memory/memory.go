@@ -1,5 +1,5 @@
-// Package memory is an auth.Store held in one process: for a host that runs a single instance, for
-// development, and for tests.
+// Package memory is an auth.Store, and the mint.Tickets of auth/mint, held in one process: for a host
+// that runs a single instance, for development, and for tests.
 //
 // Records expire on a timer each, so an expired session is reported to followers the way a store built
 // on leases reports it. The store keeps a Version per record and reports auth.ErrConflict from Touch,
@@ -22,12 +22,14 @@ import (
 // Lost, then handed a fresh Loaded.
 const followBuffer = 1024
 
-// Store is an in-process auth.Store with a feed (Follow). The zero value is not usable; call New.
+// Store is an in-process auth.Store with a feed (Follow) and ticket storage (Tickets). The zero value is
+// not usable; call New.
 type Store struct {
 	mu        sync.Mutex
 	recs      map[string]*entry
 	version   int64
 	followers map[*follower]struct{}
+	tickets   *Tickets
 }
 
 // entry is one record. Touch replaces it rather than editing it, so an expiry timer that fires late

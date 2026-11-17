@@ -6,5 +6,9 @@
   `SetValue`).
 - `auth/oidc`: sign-in through an OpenID Connect provider (authorization code flow with PKCE), one
   registered `Provider` per provider, sessions revalidated by exchanging the refresh token.
-- `auth/store/memory`: an in-process `Store` with per-record expiry and a feed for `FollowSessions`.
-- `auth/store/storetest`: the `Store` contract as a test suite any implementation runs.
+- `auth/mint`: sign-in by redeeming a one-time ticket issued on the host, into a session with a fixed
+  deadline.
+- `auth/store/memory`: an in-process `Store` with per-record expiry and a feed for `FollowSessions`,
+  and in-process `mint.Tickets`.
+- `auth/store/storetest`: the `Store` and `mint.Tickets` contracts as test suites any implementation
+  runs.

@@ -9,12 +9,17 @@ import (
 	"time"
 
 	"github.com/at-orz/x/auth"
+	"github.com/at-orz/x/auth/mint"
 	"github.com/at-orz/x/auth/store/memory"
 	"github.com/at-orz/x/auth/store/storetest"
 )
 
 func TestContract(t *testing.T) {
 	storetest.Run(t, func(*testing.T) auth.Store { return memory.New() })
+}
+
+func TestTicketsContract(t *testing.T) {
+	storetest.RunTickets(t, func(*testing.T) mint.Tickets { return memory.New().Tickets() })
 }
 
 // A follower that stops reading is not waited on: once it is too far behind it gets Lost and a fresh
