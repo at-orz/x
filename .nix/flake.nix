@@ -22,6 +22,8 @@
               pkgs.nixpkgs-fmt
               pkgs.go
               pkgs.gopls
+              pkgs.etcd
+              pkgs.gcc
             ];
           }];
         };
