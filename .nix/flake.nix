@@ -24,6 +24,7 @@
               pkgs.gopls
               pkgs.etcd
               pkgs.gcc
+              pkgs.shellcheck
             ];
           }];
         };

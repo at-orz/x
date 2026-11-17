@@ -85,6 +85,9 @@ shopt -s nullglob
 workflows=(.github/workflows/*.yaml)
 shopt -u nullglob
 if ((${#workflows[@]})); then
+	# actionlint skips shellcheck silently when it is missing, which made local
+	# runs pass where CI, with shellcheck on the runner, failed.
+	command -v shellcheck >/dev/null || fail "6 actionlint" "shellcheck is not on PATH; run inside the devshell"
 	"$TOOLS_BIN/actionlint" "${workflows[@]}" || fail "6 actionlint" "workflow files have errors"
 else
 	echo "no workflow files"
