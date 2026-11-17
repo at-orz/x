@@ -15,6 +15,7 @@ go get github.com/at-orz/x/<module>@latest
 | Module | What it is for | Docs |
 |---|---|---|
 | [`auth`](auth) | Web login sessions with pluggable sign-in: OpenID Connect providers, one-time tickets | [![Go Reference](https://pkg.go.dev/badge/github.com/at-orz/x/auth.svg)](https://pkg.go.dev/github.com/at-orz/x/auth) |
+| [`auth/store/etcd`](auth/store/etcd) | Session and ticket storage for `auth` in etcd, shared by several instances | [![Go Reference](https://pkg.go.dev/badge/github.com/at-orz/x/auth/store/etcd.svg)](https://pkg.go.dev/github.com/at-orz/x/auth/store/etcd) |
 
 No module has been released yet.
 
