@@ -13,10 +13,12 @@ die() {
 # build_tools builds the tools pinned in internal/tools into .tmp/bin.
 # `go tool -modfile` is refused in workspace mode, and running the tools under
 # GOWORK=off would leak into the packages they load, so they are built once and
-# run as plain binaries. The tools need no cgo; leaving it off keeps this step
+# run as plain binaries. The build runs inside internal/tools so that its go.mod
+# is the main module: from the root, with no go.mod there, -modfile alone
+# cannot set one. The tools need no cgo; leaving it off keeps this step
 # independent of a C compiler.
 build_tools() {
-	(cd "$REPO_ROOT" && CGO_ENABLED=0 GOWORK=off go build -modfile=internal/tools/go.mod -o "$TOOLS_BIN/" \
+	(cd "$REPO_ROOT/internal/tools" && CGO_ENABLED=0 GOWORK=off go build -o "$TOOLS_BIN/" \
 		golang.org/x/exp/cmd/gorelease \
 		honnef.co/go/tools/cmd/staticcheck \
 		golang.org/x/vuln/cmd/govulncheck \
