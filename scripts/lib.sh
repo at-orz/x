@@ -55,11 +55,53 @@ is_pseudo_version() {
 	[[ $1 =~ [0-9]{14}-[0-9a-f]{12}(\+incompatible)?$ ]]
 }
 
-# ci_succeeded_on reports whether a push-triggered ci.yaml run on master
-# completed successfully for the given commit.
-ci_succeeded_on() {
-	local conclusions
-	conclusions=$(gh run list -R "$GITHUB_REPO" --commit "$1" --workflow ci.yaml --event push \
-		--branch master --json conclusion --jq '.[].conclusion') || return 2
-	grep -qx success <<<"$conclusions"
+# ci_status_on prints the state of the push-triggered ci.yaml runs on master
+# for a commit: success, running, failed or none. Returns 2 when GitHub cannot
+# be queried, so that callers fail instead of skipping.
+ci_status_on() {
+	local runs
+	runs=$(gh run list -R "$GITHUB_REPO" --commit "$1" --workflow ci.yaml --event push \
+		--branch master --json status,conclusion --jq '.[] | "\(.status) \(.conclusion)"') || return 2
+	if grep -qx 'completed success' <<<"$runs"; then
+		echo success
+	elif grep -qv '^completed ' <<<"$runs"; then
+		echo running
+	elif [[ -n $runs ]]; then
+		echo failed
+	else
+		echo none
+	fi
+}
+
+# split_tag sets TAG_DIR and TAG_VERSION (x.y.z) from <module-dir>/v<x.y.z>.
+split_tag() {
+	[[ $1 =~ ^(.+)/v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
+	TAG_DIR=${BASH_REMATCH[1]}
+	TAG_VERSION=${BASH_REMATCH[2]}
+}
+
+# changelog_section prints the body of the "## v<x.y.z>" section of
+# <module-dir>/CHANGELOG.md, without leading or trailing blank lines.
+changelog_section() {
+	local file=$REPO_ROOT/$1/CHANGELOG.md
+	[[ -f $file ]] || return 0
+	awk -v want="v$2" '
+		/^## / { insec = ($2 == want); next }
+		insec { lines[++n] = $0 }
+		END {
+			first = 1; while (first <= n && lines[first] ~ /^[[:space:]]*$/) first++
+			last = n; while (last >= first && lines[last] ~ /^[[:space:]]*$/) last--
+			for (i = first; i <= last; i++) print lines[i]
+		}' "$file"
+}
+
+# released_versions prints the x.y.z versions tagged for a module directory,
+# lowest first.
+released_versions() {
+	git -C "$REPO_ROOT" tag -l "$1/v*" | sed -n "s|^$1/v\([0-9]*\.[0-9]*\.[0-9]*\)$|\1|p" | sort -V
+}
+
+# version_lt reports whether x.y.z version $1 sorts strictly before $2.
+version_lt() {
+	[[ $1 != "$2" && $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1) == "$1" ]]
 }

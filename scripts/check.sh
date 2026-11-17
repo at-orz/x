@@ -66,10 +66,8 @@ for m in "${modules[@]}"; do
 				fail "5 in-repo requires" "$m requires $path@$version: commit $short is unknown here"
 			git merge-base --is-ancestor "$sha" origin/master ||
 				fail "5 in-repo requires" "$m requires $path@$version: commit $short is not on origin/master"
-			rc=0
-			ci_succeeded_on "$sha" || rc=$?
-			((rc != 2)) || fail "5 in-repo requires" "$m requires $path@$version: cannot query GitHub Actions"
-			((rc == 0)) || fail "5 in-repo requires" "$m requires $path@$version: ci.yaml has not succeeded on master for $short"
+			ci=$(ci_status_on "$sha") || fail "5 in-repo requires" "$m requires $path@$version: cannot query GitHub Actions"
+			[[ $ci == success ]] || fail "5 in-repo requires" "$m requires $path@$version: ci.yaml on master for $short is '$ci', not success"
 		else
 			out=$(git ls-remote --tags origin "refs/tags/$dir/$version") ||
 				fail "5 in-repo requires" "$m requires $path@$version: cannot reach origin"
