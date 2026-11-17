@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The devshell rather than setup-go: Go, etcd and the C compiler come from
+  # the same flake.lock as on a developer machine.
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and tags: check.sh resolves in-repo requires against
+          # tags and against the ancestry of origin/master.
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check path:./.nix
+      - run: nix develop path:./.nix -c scripts/check.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: .tmp/coverage/
+          if-no-files-found: ignore
+
+  # Proves the go line is a real floor: every module is tested with exactly
+  # that Go release, never a newer toolchain. No etcd here, so tests that need
+  # it skip, as intended.
+  min-go:
+    runs-on: ubuntu-24.04
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: false
+      - name: Test every module
+        run: |
+          source scripts/lib.sh
+          mapfile -t modules < <(workspace_modules)
+          if ((${#modules[@]} == 0)); then
+            echo "no modules yet"
+            exit 0
+          fi
+          for m in "${modules[@]}"; do
+            echo "==> $m"
+            (cd "$m" && go test ./...)
+          done

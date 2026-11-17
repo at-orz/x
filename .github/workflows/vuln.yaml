@@ -1,0 +1,35 @@
+name: Vulnerabilities
+
+# Not on every push: a vulnerability database update would turn pushes red
+# that have nothing to do with it. scripts/release.sh also scans at release.
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - name: Scan every module
+        run: |
+          nix develop path:./.nix -c bash -c '
+            set -uo pipefail
+            source scripts/lib.sh
+            build_tools
+            mapfile -t modules < <(workspace_modules)
+            if ((${#modules[@]} == 0)); then
+              echo "no modules yet"
+              exit 0
+            fi
+            rc=0
+            for m in "${modules[@]}"; do
+              echo "==> $m"
+              (cd "$m" && "$TOOLS_BIN/govulncheck" ./...) || rc=1
+            done
+            exit $rc'
