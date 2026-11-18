@@ -106,21 +106,26 @@ func TestCrossSitePOST(t *testing.T) {
 
 func TestRefresh(t *testing.T) {
 	t.Parallel()
-	s := sharedStack(t)
+	s := quickStack(t)
 	c := newClient(t, s)
 	if r := c.login(s.URLs[0], "/me", stack.Carol); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d %s", r.StatusCode, r.body)
 	}
-	sid := openSession(t, s, c.sessionValue()).SID
-	before := ageRecord(t, s, sid)
+	cookie := c.sessionValue()
+	sid := sessionID(t, s, cookie)
+	before, err := record(t, s, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	c.setSession(nearExpiry(t, s, c.sessionValue()))
+	untilRefresh()
 	r, me := c.me(s.URLs[0], "")
 	if r.StatusCode != http.StatusOK || me.Claims["email"] != stack.Carol.Email {
-		t.Fatalf("near expiry: %d %s", r.StatusCode, r.body)
+		t.Fatalf("in the refresh window: %d %s", r.StatusCode, r.body)
 	}
-	if st := openSession(t, s, c.sessionValue()); time.Until(time.Unix(st.Exp, 0)) < 50*time.Minute {
-		t.Fatalf("the cookie was not renewed: exp in %s", time.Until(time.Unix(st.Exp, 0)))
+	// A renewed cookie carries a later exp, so it is signed into a different value.
+	if c.sessionValue() == cookie {
+		t.Fatal("the cookie was not renewed")
 	}
 	after, err := record(t, s, sid)
 	if err != nil {
@@ -136,17 +141,21 @@ func TestRefresh(t *testing.T) {
 
 func TestIdPDown(t *testing.T) {
 	t.Parallel()
-	s := ownStack(t)
+	s := quickStack(t)
 	c := newClient(t, s)
 	if r := c.login(s.URLs[0], "/me", stack.Alice); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d %s", r.StatusCode, r.body)
 	}
 	cookie := c.sessionValue()
-	sid := openSession(t, s, cookie).SID
-	before := ageRecord(t, s, sid)
+	sid := sessionID(t, s, cookie)
+	before, err := record(t, s, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	s.Dex.Stop()
-	r, _ := c.me(s.URLs[0], nearExpiry(t, s, cookie))
+	untilRefresh()
+	r, _ := c.me(s.URLs[0], cookie)
 	if r.StatusCode != http.StatusOK {
 		t.Fatalf("Dex down, inside the grace window: %d %s", r.StatusCode, r.body)
 	}
@@ -160,7 +169,7 @@ func TestIdPDown(t *testing.T) {
 	// The failed attempt left its claim on the record, which holds every instance back for a few
 	// seconds, so the next request that refreshes is a few requests away.
 	eventually(t, 30*time.Second, "a refresh after Dex came back", func() bool {
-		if r, _ := c.me(s.URLs[0], nearExpiry(t, s, cookie)); r.StatusCode != http.StatusOK {
+		if r, _ := c.me(s.URLs[0], cookie); r.StatusCode != http.StatusOK {
 			t.Fatalf("Dex back: %d %s", r.StatusCode, r.body)
 		}
 		rec, err := record(t, s, sid)
@@ -170,19 +179,18 @@ func TestIdPDown(t *testing.T) {
 
 func TestIdPRefuses(t *testing.T) {
 	t.Parallel()
-	s := ownStack(t)
+	s := quickStack(t)
 	c := newClient(t, s)
 	if r := c.login(s.URLs[0], "/me", stack.Alice); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d %s", r.StatusCode, r.body)
 	}
-	sid := openSession(t, s, c.sessionValue()).SID
-	ageRecord(t, s, sid)
+	sid := sessionID(t, s, c.sessionValue())
 
 	// What a revocation does to Dex's storage.
 	if _, err := s.Etcd.Delete(t.Context(), stack.DexPrefix+"refresh_token/", clientv3.WithPrefix()); err != nil {
 		t.Fatal(err)
 	}
-	c.setSession(nearExpiry(t, s, c.sessionValue()))
+	untilRefresh()
 	r, _ := c.me(s.URLs[0], "")
 	if r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("after the revocation: %d %s", r.StatusCode, r.body)
@@ -224,13 +232,13 @@ func TestLogoutReachesB(t *testing.T) {
 
 func TestOneRefreshForTwo(t *testing.T) {
 	t.Parallel()
-	s := sharedStack(t)
+	s := quickStack(t)
 	c := newClient(t, s)
 	if r := c.login(s.URLs[0], "/me", stack.Dave); r.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d %s", r.StatusCode, r.body)
 	}
-	ageRecord(t, s, openSession(t, s, c.sessionValue()).SID)
-	near := nearExpiry(t, s, c.sessionValue())
+	near := c.sessionValue()
+	untilRefresh()
 
 	// Dex refuses a refresh token presented twice, and a refusal ends the session: had both instances
 	// refreshed, one of them would answer 401.

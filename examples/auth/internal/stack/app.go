@@ -17,6 +17,8 @@ type instanceConfig struct {
 	caFile  string
 	etcdURL string
 	sink    io.Writer
+
+	revalidateEvery time.Duration
 }
 
 // startInstance starts one app instance and waits for its home page. It returns the process and the
@@ -45,6 +47,9 @@ func startInstance(ctx context.Context, name string, cfg instanceConfig) (*proc,
 			"-allow-email", strings.Join(emails, ","),
 			"-allow-minted", strings.Join(AllowedMinted, ","),
 		)
+		if cfg.revalidateEvery != 0 {
+			argv = append(argv, "-revalidate-every", cfg.revalidateEvery.String())
+		}
 		p, err = start(name, argv, cfg.env, nil, cfg.sink)
 		if err != nil {
 			return err

@@ -33,6 +33,8 @@ type Options struct {
 	Instances int
 	// Log receives the output of every process as it is written. Logs keeps the tail regardless.
 	Log io.Writer
+	// RevalidateEvery is passed to every instance as -revalidate-every when non-zero.
+	RevalidateEvery time.Duration
 }
 
 // Stack is a running stack. Browsers scope cookies by host and not by port, so every front door
@@ -120,6 +122,8 @@ func Start(ctx context.Context, o Options) (s *Stack, err error) {
 		caFile:  c.file,
 		etcdURL: s.EtcdURL,
 		sink:    o.Log,
+
+		revalidateEvery: o.RevalidateEvery,
 	}
 	for i, f := range s.doors {
 		p, base, err := startInstance(ctx, fmt.Sprintf("app-%c", 'a'+i), cfg)

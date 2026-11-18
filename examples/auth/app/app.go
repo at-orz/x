@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/at-orz/x/auth"
 	"github.com/at-orz/x/auth/mint"
@@ -47,6 +48,8 @@ type Config struct {
 	// Key signs every cookie: at least 32 bytes, the same on every instance.
 	Key []byte
 	Log *slog.Logger
+	// RevalidateEvery is how often a session goes back to the identity provider. Zero is auth's default.
+	RevalidateEvery time.Duration
 }
 
 // New builds the app's handler. ctx bounds the session feed.
@@ -65,6 +68,8 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 		Authorize: Authorize(cfg.AllowEmails, cfg.AllowMinted),
 		Log:       log,
 		Link:      link,
+
+		RevalidateEvery: cfg.RevalidateEvery,
 	})
 	if err != nil {
 		return nil, err

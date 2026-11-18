@@ -45,7 +45,7 @@ func run(m *testing.M) int {
 			return m.Run()
 		}
 	}
-	s, err := startStack(context.Background())
+	s, err := startStack(context.Background(), stack.Options{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e: starting the shared stack:", err)
 		return 1
@@ -61,8 +61,10 @@ func run(m *testing.M) int {
 	return m.Run()
 }
 
-func startStack(ctx context.Context) (*stack.Stack, error) {
-	return stack.Start(ctx, stack.Options{Command: []string{os.Args[0]}, Env: []string{roleEnv + "=serve"}})
+func startStack(ctx context.Context, o stack.Options) (*stack.Stack, error) {
+	o.Command = []string{os.Args[0]}
+	o.Env = []string{roleEnv + "=serve"}
+	return stack.Start(ctx, o)
 }
 
 // sharedStack is the shared stack, or a skip.
@@ -75,13 +77,21 @@ func sharedStack(t *testing.T) *stack.Stack {
 	return shared
 }
 
-// ownStack is a stack for this test alone, for a test that stops or empties Dex.
-func ownStack(t *testing.T) *stack.Stack {
+// quickStack is a stack for this test alone whose sessions revalidate every few seconds, for a test
+// that waits for a revalidation. The shared stack keeps auth's default, so that no other test meets one
+// halfway through.
+func quickStack(t *testing.T) *stack.Stack {
+	t.Helper()
+	return ownStack(t, stack.Options{RevalidateEvery: quickInterval})
+}
+
+// ownStack is a stack for this test alone.
+func ownStack(t *testing.T, o stack.Options) *stack.Stack {
 	t.Helper()
 	if shared == nil {
 		t.Skip(skipped)
 	}
-	s, err := startStack(t.Context())
+	s, err := startStack(t.Context(), o)
 	if err != nil {
 		t.Fatal(err)
 	}

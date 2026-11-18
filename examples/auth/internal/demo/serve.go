@@ -38,6 +38,7 @@ func Serve(ctx context.Context, args []string) error {
 	endpoints := fs.String("etcd", "http://127.0.0.1:2379", "etcd endpoints, comma-separated")
 	emails := fs.String("allow-email", "", "verified emails allowed to sign in, comma-separated")
 	minted := fs.String("allow-minted", "", "ticket subjects allowed to sign in, comma-separated")
+	revalidate := fs.Duration("revalidate-every", 0, "how often a session goes back to the identity provider; 0 is auth's default")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,6 +67,8 @@ func Serve(ctx context.Context, args []string) error {
 		Feed:         store.Follow(ctx),
 		Key:          key,
 		Log:          log,
+
+		RevalidateEvery: *revalidate,
 	})
 	if err != nil {
 		return err

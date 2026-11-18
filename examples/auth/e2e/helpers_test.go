@@ -151,11 +151,6 @@ func (c *client) sessionValue() string {
 	return ""
 }
 
-func (c *client) setSession(value string) {
-	u, _ := url.Parse(c.s.URLs[0])
-	c.jar.SetCookies(u, []*http.Cookie{{Name: sessionCookie, Value: value, Path: "/", Secure: true, HttpOnly: true}})
-}
-
 // me is GET /api/me as JSON, sending cookie in place of the jar's when it is set: a test that wants
 // to know what the server does with a cookie the browser would already have dropped sends it itself.
 func (c *client) me(base, cookie string) (response, app.Me) {
@@ -189,64 +184,29 @@ func (c *client) me(base, cookie string) (response, app.Me) {
 	return r, me
 }
 
-// cookieState mirrors the payload of auth's session cookie, which is unexported (XGO-9). A change to
-// that format leaves these fields zero rather than failing, which nearExpiry checks for.
-type cookieState struct {
-	SID      string `json:"sid"`
-	Exp      int64  `json:"exp"`
-	Deadline int64  `json:"dl,omitempty"`
+// quickInterval is the revalidation interval of a quickStack: the refresh window and the refresh floor
+// are 2s each.
+const quickInterval = 4 * time.Second
+
+// untilRefresh waits from a sign-in on a quickStack until its session is due a revalidation. 3s is past
+// the 2s floor, and leaves the cookie's exp at most a second out, inside the 2s window, whichever way
+// the whole seconds of exp were truncated.
+func untilRefresh() {
+	time.Sleep(3 * time.Second)
 }
 
-// opener is a Manager on the stack's key, used for Open and Seal alone.
-func opener(t *testing.T, s *stack.Stack) *auth.Manager {
+// sessionID is the id of the session a cookie value names, read with a Manager on the stack's key.
+func sessionID(t *testing.T, s *stack.Stack, cookie string) string {
 	t.Helper()
 	m, err := auth.New(auth.Options{Store: memory.New(), Key: s.Key, Authorize: auth.AnyOf()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return m
-}
-
-func openSession(t *testing.T, s *stack.Stack, value string) cookieState {
-	t.Helper()
-	var st cookieState
-	if err := opener(t, s).Open(value, &st); err != nil {
-		t.Fatalf("opening the session cookie: %v", err)
-	}
-	if st.SID == "" || st.Exp == 0 {
-		t.Fatalf("the session cookie decodes to %+v: has auth changed its format?", st)
-	}
-	return st
-}
-
-// nearExpiry re-seals a session cookie with its exp a minute out, inside the refresh window, as an hour
-// of waiting would.
-func nearExpiry(t *testing.T, s *stack.Stack, value string) string {
-	t.Helper()
-	st := openSession(t, s, value)
-	st.Exp = time.Now().Add(time.Minute).Unix()
-	v, err := opener(t, s).Seal(st)
+	sid, err := m.SessionID(cookie)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reading the session cookie: %v", err)
 	}
-	return v
-}
-
-// ageRecord moves a session record's VerifiedAt back past the half hour within which auth counts a
-// verification as current, and returns the record as written. A near-expiry cookie alone is not
-// enough: a session verified a moment ago is not revalidated again, whatever its cookie says (XGO-9).
-func ageRecord(t *testing.T, s *stack.Stack, sid string) auth.Record {
-	t.Helper()
-	store := etcd.New(s.Etcd, demo.EtcdPrefix)
-	rec, err := store.Get(t.Context(), sid)
-	if err != nil {
-		t.Fatalf("reading the session record: %v", err)
-	}
-	rec.VerifiedAt = time.Now().Add(-45 * time.Minute)
-	if err := store.Touch(t.Context(), sid, rec); err != nil {
-		t.Fatalf("writing the session record: %v", err)
-	}
-	return rec
+	return sid
 }
 
 // record reads a session record straight from etcd, through the store the app uses.
