@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"slices"
 
 	"github.com/at-orz/x/auth"
 	"github.com/at-orz/x/auth/mint"
@@ -128,30 +127,13 @@ func idpClient(caFile string) (*http.Client, error) {
 // Authorize admits the provider's accounts by verified email, and the listed subjects of tickets.
 //
 // The provider's accounts go by email rather than by subject because Dex's sub is an opaque encoding
-// of the user id and connector that nobody would type into an allow list. The email has to be
-// verified: an unverified one is only what somebody typed at sign-up. auth has no such policy of its
-// own (XGO-8).
+// of the user id and connector that nobody would type into an allow list. oidc.AllowEmails needs the
+// email scope, which the Provider requests.
 func Authorize(emails, minted []string) auth.Authorize {
 	return auth.AnyOf(
-		allowEmails(ProviderName, func() []string { return emails }),
+		oidc.AllowEmails(ProviderName, func() []string { return emails }),
 		auth.AllowSubjects("mint", func() []string { return minted }),
 	)
-}
-
-func allowEmails(provider string, emails func() []string) auth.Authorize {
-	return func(_ context.Context, id auth.Identity) error {
-		if id.Provider != provider {
-			return fmt.Errorf("%w: the email allow list covers %q, not %q", auth.ErrNotAllowed, provider, id.Provider)
-		}
-		email, _ := id.Claims["email"].(string)
-		if verified, _ := id.Claims["email_verified"].(bool); email == "" || !verified {
-			return fmt.Errorf("%w: subject %q has no verified email", auth.ErrNotAllowed, id.Subject)
-		}
-		if !slices.Contains(emails(), email) {
-			return fmt.Errorf("%w: %q is not on the email allow list", auth.ErrNotAllowed, email)
-		}
-		return nil
-	}
 }
 
 // UserKey is the session value holding the app's own user id.
