@@ -17,6 +17,9 @@ Nothing in the tree carries a version number, so a release never needs a commit 
   `v0` it reports incompatible changes but accepts any version, so `release.sh` also requires the
   proposed version to be no lower than the one `gorelease` suggests. A patch over a removed function
   is refused.
+- **Nothing under `examples/` is ever released.** An example exists to be read and run from this
+  repository, and its dependencies (a browser driver, say) must never reach anyone's `go.mod`, so
+  `release.sh` refuses such a directory before it checks anything else.
 
 ## The Go floor
 
