@@ -19,3 +19,5 @@
   Cross-origin POSTs are refused.
 - `auth`: the package documentation points to `examples/auth` in the repository, a complete host
   app with end-to-end tests against a real provider and browser.
+- `auth/mint`: `Issue` writes a ticket from `Options` alone, so a host command needs no
+  `auth.Manager`.

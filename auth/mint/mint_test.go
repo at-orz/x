@@ -250,6 +250,72 @@ func TestIssueWritesATicket(t *testing.T) {
 	}
 }
 
+// failingPut stands for a ticket store the host cannot write to.
+type failingPut struct{ mint.Tickets }
+
+func (failingPut) Put(context.Context, string, mint.Ticket, time.Duration) error {
+	return errors.New("store: no endpoints available")
+}
+
+// A host command writes a ticket from the Options alone, and the method the server built from the same
+// Options redeems it.
+func TestIssueNeedsNoManager(t *testing.T) {
+	e := newEnv(t, nil)
+	o := mint.Options{Tickets: e.store.Tickets()}
+	path, err := mint.Issue(context.Background(), o, "agent", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Path != "/auth/mint/mint" || len(u.Query().Get("t")) != 32 {
+		t.Errorf("Issue returned %q", path)
+	}
+	ticket, err := e.store.Tickets().Redeem(context.Background(), u.Query().Get("t"))
+	if err != nil || ticket.Subject != "agent" || ticket.SessionTTL != time.Hour || ticket.CreatedAt.IsZero() {
+		t.Errorf("the ticket written is %+v (%v)", ticket, err)
+	}
+
+	path, err = mint.Issue(context.Background(), o, "agent", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := e.redeem(t, path, nil)
+	if w.Code != http.StatusFound || sessionCookieOf(w) == nil {
+		t.Errorf("the method did not redeem the ticket: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestIssueRefusesWhatNewRefuses(t *testing.T) {
+	ts := memory.New().Tickets()
+	ctx := context.Background()
+	for _, bad := range []struct {
+		o   mint.Options
+		sub string
+		ttl time.Duration
+	}{
+		{mint.Options{}, "agent", time.Hour},
+		{mint.Options{Name: "Bad", Tickets: ts}, "agent", time.Hour},
+		{mint.Options{Tickets: ts}, "", time.Hour},
+		{mint.Options{Tickets: ts}, "agent", 0},
+		{mint.Options{Tickets: ts}, "agent", -time.Hour},
+	} {
+		if _, err := mint.Issue(ctx, bad.o, bad.sub, bad.ttl); err == nil {
+			t.Errorf("Issue(%+v, %q, %s) succeeded", bad.o, bad.sub, bad.ttl)
+		}
+	}
+	path, err := mint.Issue(ctx, mint.Options{Name: "ops", Tickets: ts}, "agent", time.Hour)
+	if err != nil || !strings.HasPrefix(path, "/auth/mint/ops?t=") {
+		t.Errorf("a named Issue returned %q (%v)", path, err)
+	}
+	_, err = mint.Issue(ctx, mint.Options{Tickets: failingPut{ts}}, "agent", time.Hour)
+	if err == nil || !strings.Contains(err.Error(), "mint: writing the ticket: store: no endpoints available") {
+		t.Errorf("a failed Put gave %v", err)
+	}
+}
+
 // From the browser on, a redeemed ticket is an ordinary session. What it does not carry is anything to
 // revalidate, and the deadline is there instead.
 func TestMintRedeemsATicketIntoASession(t *testing.T) {

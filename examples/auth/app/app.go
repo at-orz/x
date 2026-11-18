@@ -92,7 +92,7 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	mt, err := mint.New(m, mint.Options{Tickets: cfg.Tickets})
+	mt, err := mint.New(m, mintOptions(cfg))
 	if err != nil {
 		return nil, err
 	}

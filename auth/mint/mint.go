@@ -1,10 +1,10 @@
 // Package mint signs in by redeeming a one-time ticket issued on the host: the way in for a subject that
 // cannot answer an interactive prompt at an identity provider, such as an automated browser or an agent.
 //
-// The host writes a ticket (Method.Issue, typically from a command line) and hands out the path it
-// returns. Opening that path spends nothing: it serves a page that posts the ticket back at once, or
-// offers a button to a browser without JavaScript, and that POST spends the ticket and starts a session
-// with a fixed deadline. From the browser on it is an ordinary session of the auth.Manager — the same
+// The host writes a ticket and hands out the path it returns: with Issue, typically from a command line
+// that has no auth.Manager, or with Method.Issue where it already holds the method. Opening that path
+// spends nothing: it serves a page that posts the ticket back at once, or offers a button to a browser
+// without JavaScript, and that POST spends the ticket and starts a session with a fixed deadline. From the browser on it is an ordinary session of the auth.Manager — the same
 // cookie, the same record, the same Require — except that nothing revalidates it: its deadline is what
 // ends it.
 //
@@ -73,19 +73,28 @@ type Method struct {
 
 var namePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-// New builds a Method and registers it with m.
-func New(m *auth.Manager, o Options) (*Method, error) {
-	if o.Name == "" {
-		o.Name = "mint"
+// resolve is shared by New and Issue, so that a command line refuses the same Options the server does.
+func (o Options) resolve() (name, path string, err error) {
+	name = o.Name
+	if name == "" {
+		name = "mint"
 	}
-	if !namePattern.MatchString(o.Name) {
-		return nil, fmt.Errorf("mint: name %q is not [a-z0-9-]+", o.Name)
+	if !namePattern.MatchString(name) {
+		return "", "", fmt.Errorf("mint: name %q is not [a-z0-9-]+", name)
 	}
 	if o.Tickets == nil {
-		return nil, errors.New("mint: Options.Tickets is required")
+		return "", "", errors.New("mint: Options.Tickets is required")
 	}
-	mt := &Method{m: m, name: o.Name, tickets: o.Tickets, path: "/auth/mint/" + o.Name,
-		cop: http.NewCrossOriginProtection()}
+	return name, "/auth/mint/" + name, nil
+}
+
+// New builds a Method and registers it with m.
+func New(m *auth.Manager, o Options) (*Method, error) {
+	name, path, err := o.resolve()
+	if err != nil {
+		return nil, err
+	}
+	mt := &Method{m: m, name: name, tickets: o.Tickets, path: path, cop: http.NewCrossOriginProtection()}
 	if err := m.Register(mt); err != nil {
 		return nil, err
 	}
@@ -109,6 +118,22 @@ func (mt *Method) Revalidate(_ context.Context, rec auth.Record) (auth.Record, e
 // client may instead POST its t to the path without the query. The path is a credential until it is
 // spent.
 func (mt *Method) Issue(ctx context.Context, subject string, sessionTTL time.Duration) (path string, err error) {
+	return issue(ctx, mt.tickets, mt.path, subject, sessionTTL)
+}
+
+// Issue writes a ticket for a session of subject lasting sessionTTL from its redemption, and returns the
+// path that redeems it at a Method built from the same Options. It needs no auth.Manager, so a host
+// command can write a ticket without the session key or store. The path is a credential until it is
+// spent.
+func Issue(ctx context.Context, o Options, subject string, sessionTTL time.Duration) (path string, err error) {
+	_, path, err = o.resolve()
+	if err != nil {
+		return "", err
+	}
+	return issue(ctx, o.Tickets, path, subject, sessionTTL)
+}
+
+func issue(ctx context.Context, tickets Tickets, path, subject string, sessionTTL time.Duration) (string, error) {
 	if subject == "" {
 		return "", errors.New("mint: a ticket needs a subject")
 	}
@@ -116,10 +141,10 @@ func (mt *Method) Issue(ctx context.Context, subject string, sessionTTL time.Dur
 		return "", fmt.Errorf("mint: a session length of %s", sessionTTL)
 	}
 	nonce := web.RandomToken()
-	if err := mt.tickets.Put(ctx, nonce, Ticket{Subject: subject, SessionTTL: sessionTTL, CreatedAt: time.Now()}, TicketTTL); err != nil {
+	if err := tickets.Put(ctx, nonce, Ticket{Subject: subject, SessionTTL: sessionTTL, CreatedAt: time.Now()}, TicketTTL); err != nil {
 		return "", fmt.Errorf("mint: writing the ticket: %w", err)
 	}
-	return mt.path + "?" + url.Values{"t": {nonce}}.Encode(), nil
+	return path + "?" + url.Values{"t": {nonce}}.Encode(), nil
 }
 
 // Routes mounts /auth/mint/<name>, which needs no session itself: holding the ticket is what stands in
