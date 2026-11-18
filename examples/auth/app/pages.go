@@ -24,7 +24,7 @@ type server struct {
 }
 
 func (s *server) routes(mux *http.ServeMux) {
-	mux.Handle("GET /{$}", s.optional(http.HandlerFunc(s.home)))
+	mux.Handle("GET /{$}", s.m.Optional(http.HandlerFunc(s.home)))
 	mux.Handle("GET /me", s.m.Require(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/me", s.m.Require(http.HandlerFunc(s.apiMe)))
 	mux.Handle("GET /live", s.m.Require(http.HandlerFunc(s.live)))
@@ -109,31 +109,3 @@ func (s *server) render(w http.ResponseWriter, name string, v view) {
 		s.log.Warn("rendering a page failed", "page", name, "err", err)
 	}
 }
-
-// optional runs next with the request's session when it has a valid one, and without when it has not,
-// where Require would redirect to the login instead.
-//
-// auth offers no such middleware (XGO-11), so this runs Require against a response that is thrown
-// away, keeping only the cookies it set: a renewed session cookie, or the clearing of an ended one.
-func (s *server) optional(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		probe := &discard{h: http.Header{}}
-		var admitted *http.Request
-		s.m.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-			admitted = r
-		})).ServeHTTP(probe, r)
-		for _, c := range probe.h.Values("Set-Cookie") {
-			w.Header().Add("Set-Cookie", c)
-		}
-		if admitted != nil {
-			r = admitted
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-type discard struct{ h http.Header }
-
-func (d *discard) Header() http.Header         { return d.h }
-func (d *discard) Write(b []byte) (int, error) { return len(b), nil }
-func (d *discard) WriteHeader(int)             {}
