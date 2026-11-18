@@ -25,6 +25,8 @@
               pkgs.etcd
               pkgs.gcc
               pkgs.shellcheck
+              pkgs.dex-oidc
+              pkgs.chromium
             ];
           }];
         };
