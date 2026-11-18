@@ -73,6 +73,11 @@ another, and using one never pulls in another's dependencies.
   not bound by the floor, and is never released.
 - **Every change to a module adds an entry** under `## Unreleased` in that module's `CHANGELOG.md`,
   in the same commit.
+- **A module under `examples/` is never released.** It shows how the published modules fit
+  together, so it may depend on whatever its demonstration needs without that reaching anyone's
+  `go.mod`. It is in `go.work` and follows the floor, the no-`replace` rule and every check in
+  `scripts/check.sh`, but it has no `CHANGELOG.md` and the changelog rule above does not apply to
+  it. `scripts/release.sh` refuses it. Its tracker label is `area:examples`.
 
 Adding a module:
 
@@ -85,6 +90,9 @@ Adding a module:
 5. Add a row to the module table in `README.md`.
 6. Create the `area:<top-level directory>` label on the tracker; a nested module shares its
    top-level directory's label (`auth/store/etcd` is `area:auth`).
+
+An example module under `examples/` skips step 3 (it has no changelog) and step 5 (the module table
+lists only what can be imported; examples go in the README's **Examples** section instead).
 
 `scripts/check.sh` fails on a module missing from `go.work`, a wrong `go` line, a `toolchain` or
 `replace` line, or an untidy `go.mod`.
@@ -138,6 +146,7 @@ Triage every issue on two dimensions plus one flag. `area:` says where the work 
 |---|---|
 | `area:<package>` | One per top-level package, named after its directory (`area:oidc`) |
 | `area:docs` | README, `docs/` |
+| `area:examples` | The unreleased example modules under `examples/` |
 | `area:infra` | CI, release and tagging, the nix devshell, repo tooling |
 
 Several `area:` labels on one card are normal when the work really spans packages. Exactly one

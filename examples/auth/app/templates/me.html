@@ -1,0 +1,16 @@
+{{define "me.html"}}<!doctype html>
+<html><head><meta charset="utf-8"><title>Your session</title></head>
+<body>
+<h1>Your session</h1>
+<p>Signed in as <b id="subject">{{.Subject}}</b> through <b id="provider">{{.Provider}}</b>.</p>
+<p>App user: <span id="user">{{.User}}</span></p>
+{{if .Deadline}}<p>The session ends at <span id="deadline">{{.Deadline}}</span>.</p>{{else}}<p>The session is revalidated with the identity provider while it is in use.</p>{{end}}
+{{if .Claims}}<h2>Claims</h2>
+<dl id="claims">{{range .Claims}}<dt>{{.Name}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{end}}
+{{if .Values}}<h2>Values</h2>
+<dl id="values">{{range .Values}}<dt>{{.Name}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{end}}
+<p>Live connection: <span id="live">connecting</span></p>
+<p><button id="logout" type="button">Sign out</button></p>
+<script src="/static/me.js"></script>
+</body></html>
+{{end}}

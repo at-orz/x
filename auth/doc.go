@@ -16,4 +16,9 @@
 // linking several identities to one user of the host is the host's job, and [Session.Values] is where
 // it may keep the result. A page offering several ways to sign in is the host's to render as well;
 // each method provides the URL its login starts at.
+//
+// A complete host is in examples/auth of this module's repository: an app signing people in through
+// an OpenID Connect provider and automated clients through tickets, with its sessions in etcd shared
+// by two instances behind TLS. It uses only the public API, and its end-to-end tests run it against a
+// real provider and a real browser.
 package auth

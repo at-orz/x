@@ -53,6 +53,12 @@ check_failed() {
 
 step() { echo "==> $*"; }
 
+# Ahead of every other check and in every mode: no precondition can make an
+# example releasable, so a dry run listing the others would only mislead.
+if [[ $dir == examples/* ]]; then
+	die "$dir is an example and is never released"
+fi
+
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version '$version' is not x.y.z"
 
 if [[ $mode == verify ]]; then

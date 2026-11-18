@@ -17,3 +17,5 @@
 - `auth/mint`: opening a sign-in link serves a page that submits itself (a button without
   JavaScript), and only that POST spends the ticket, so a link preview no longer burns it.
   Cross-origin POSTs are refused.
+- `auth`: the package documentation points to `examples/auth` in the repository, a complete host
+  app with end-to-end tests against a real provider and browser.

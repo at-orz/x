@@ -1,0 +1,15 @@
+{{define "home.html"}}<!doctype html>
+<html><head><meta charset="utf-8"><title>auth example</title></head>
+<body>
+<h1>auth example</h1>
+{{if .SignedIn}}
+<p id="status">Signed in as <b id="subject">{{.Subject}}</b> through <b id="provider">{{.Provider}}</b>.</p>
+<p>App user: <span id="user">{{.User}}</span></p>
+{{if .Deadline}}<p>The session ends at <span id="deadline">{{.Deadline}}</span>.</p>{{end}}
+<p><a href="/me">Your session</a></p>
+{{else}}
+<p id="status">Not signed in.</p>
+<p><a id="login" href="{{.LoginURL}}">Sign in</a></p>
+{{end}}
+</body></html>
+{{end}}
