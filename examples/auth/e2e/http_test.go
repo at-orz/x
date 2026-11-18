@@ -212,8 +212,9 @@ func TestLogoutReachesB(t *testing.T) {
 		t.Fatalf("B before the logout: %d %s", r.StatusCode, r.body)
 	}
 
-	if r := c.do(http.MethodPost, s.URLs[0]+"/auth/logout", nil); r.StatusCode != http.StatusNoContent {
-		t.Fatalf("logout on A: %d %s", r.StatusCode, r.body)
+	if r := c.do(http.MethodPost, s.URLs[0]+"/auth/logout", nil); r.StatusCode != http.StatusSeeOther ||
+		r.Header.Get("Location") != "/" {
+		t.Fatalf("logout on A: %d to %q %s", r.StatusCode, r.Header.Get("Location"), r.body)
 	}
 	eventually(t, 5*time.Second, "B refusing the logged-out cookie", func() bool {
 		r, _ := c.me(s.URLs[1], cookie)

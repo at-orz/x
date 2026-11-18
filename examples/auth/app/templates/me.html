@@ -10,7 +10,7 @@
 {{if .Values}}<h2>Values</h2>
 <dl id="values">{{range .Values}}<dt>{{.Name}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{end}}
 <p>Live connection: <span id="live">connecting</span></p>
-<p><button id="logout" type="button">Sign out</button></p>
+<form method="post" action="/auth/logout"><button id="logout">Sign out</button></form>
 <script src="/static/me.js"></script>
 </body></html>
 {{end}}

@@ -6,10 +6,3 @@ ws.onopen = () => { live.textContent = "open"; };
 ws.onclose = (ev) => {
   live.textContent = ev.code === 1008 ? "session ended" : "closed (" + ev.code + ")";
 };
-
-// POST /auth/logout answers 204, which leaves a form submission on this page, so the logout goes
-// through fetch and the navigation is done here (XGO-10).
-document.getElementById("logout").addEventListener("click", async () => {
-  await fetch("/auth/logout", { method: "POST" });
-  location.assign("/");
-});
