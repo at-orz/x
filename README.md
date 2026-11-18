@@ -23,6 +23,14 @@ Each module is versioned and tagged on its own (`<module>/vX.Y.Z`), keeps its re
 own `CHANGELOG.md`, and supports the older of the two Go releases currently supported. Every module
 is still at `v0`: minor versions may break the API, and the changelog says how.
 
+## Examples
+
+Not modules to import: code to read and run from this repository, never released.
+
+| Example | What it shows |
+|---|---|
+| [`examples/auth`](examples/auth) | A web app on `auth`, `auth/oidc`, `auth/mint` and `auth/store/etcd`, with end-to-end tests against Dex and Chromium. Run it with `cd examples/auth && nix develop path:../../.nix -c go run . up`. |
+
 ## Contributing
 
 Rules for working in this repository, for humans and agents alike, are in [AGENTS.md](AGENTS.md);
