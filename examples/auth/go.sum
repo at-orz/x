@@ -1,5 +1,5 @@
-github.com/at-orz/x/auth v0.0.0-20261118112250-cfcd4c3e6d28 h1:W+eJtTRB7imZwG+Sz7Jw707IEUldkNd5+oqReBAxqYk=
-github.com/at-orz/x/auth v0.0.0-20261118112250-cfcd4c3e6d28/go.mod h1:UGA+Mojltqq9IPgHBefnBD47jf39XQrefiXwn2QcwCM=
+github.com/at-orz/x/auth v0.0.0-20261118113122-a8fab1888935 h1:A4kYu13wYUugijUnKooTgcVN+dOTUSOW1pmt4Qj3EYs=
+github.com/at-orz/x/auth v0.0.0-20261118113122-a8fab1888935/go.mod h1:UGA+Mojltqq9IPgHBefnBD47jf39XQrefiXwn2QcwCM=
 github.com/at-orz/x/auth/store/etcd v0.0.0-20261118092913-cf78fbd39aa9 h1:HjiyzlE1En1ws4l7XFRVkYucFqXT1CluwQEgBqPpHRw=
 github.com/at-orz/x/auth/store/etcd v0.0.0-20261118092913-cf78fbd39aa9/go.mod h1:zLBT+8f0g3Jsjt5p+Fe8HLH1HnEzzfS8zxhKsFGAZn8=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
