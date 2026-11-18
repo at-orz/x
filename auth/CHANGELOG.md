@@ -21,3 +21,6 @@
   app with end-to-end tests against a real provider and browser.
 - `auth/mint`: `Issue` writes a ticket from `Options` alone, so a host command needs no
   `auth.Manager`.
+- `auth`: `POST /auth/logout` sends a browser on with `303 See Other` to the on-site path in `ret`
+  (form body or query string), or to `/`, so a plain HTML form can sign out. A request accepting JSON
+  still gets `204`. A POST from another site is refused with `403 cross_origin_request`.

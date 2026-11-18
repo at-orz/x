@@ -5,12 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/at-orz/x/auth/internal/web"
 )
 
 // LogoutPath ends the session of the request. Routes mounts it.
+//
+// A POST to it answers 204 to a request whose Accept contains application/json, and otherwise 303 See
+// Other to the ret parameter (form body or query string, an absolute path on this site) or to "/". A
+// plain <form method="post" action="/auth/logout"> is therefore enough to sign out. A POST from another
+// site is refused with 403 cross_origin_request, leaving the session in place.
 const LogoutPath = "/auth/logout"
 
 // Issue starts a session for an identity a method has established: it asks Authorize and Options.Link,
@@ -96,17 +102,35 @@ func (m *Manager) Issue(w http.ResponseWriter, r *http.Request, g Grant) error {
 	return nil
 }
 
-// Routes mounts POST /auth/logout, which needs no session itself.
+// Routes mounts POST /auth/logout, which needs no session itself. It answers as LogoutPath describes: 204
+// to JSON, a 303 to ret or "/" for a browser, 403 to a POST from another site.
 func (m *Manager) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+LogoutPath, m.handleLogout)
 }
 
 func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// The session cookie is SameSite=Lax, so a POST from another site never reaches the record — but the
+	// answer would still clear the cookie, and any page could sign a visitor out with a form.
+	if err := m.cop.Check(r); err != nil {
+		m.log.Warn("a logout was posted from another site", "remote", r.RemoteAddr, "err", err)
+		m.Fail(w, http.StatusForbidden, "cross_origin_request", web.CrossOrigin)
+		return
+	}
 	// The record goes first: clearing the cookie alone would leave a credential in the store that nothing
 	// will ever use and only expiry would remove.
 	m.endSessionOf(r, "logout")
 	web.ClearCookie(w, r, m.sessionCookie)
-	w.WriteHeader(http.StatusNoContent)
+	// The rule Require uses to choose a 401 over a redirect. A 303 rather than a 302 makes the browser follow
+	// with a GET, never a repeated POST.
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	to := web.SafeReturn(r.FormValue("ret"))
+	if to == "" {
+		to = "/"
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
 // endSessionOf deletes the record named by the session cookie of a request, when it names one that

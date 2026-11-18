@@ -283,6 +283,7 @@ func TestLogoutDeletesTheRecord(t *testing.T) {
 	h.m.Routes(mux)
 
 	r := httptest.NewRequest(http.MethodPost, LogoutPath, nil)
+	r.Header.Set("Accept", "application/json")
 	r.AddCookie(c)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
@@ -302,6 +303,96 @@ func TestLogoutDeletesTheRecord(t *testing.T) {
 	if got := h.ask(t, h.cookieAt(t, sid, 5*time.Minute)); got.Code != http.StatusUnauthorized {
 		t.Errorf("a cookie in the window after the logout gave status = %d, want 401", got.Code)
 	}
+}
+
+// A plain form is enough to sign out: the browser is sent on to ret, or to the root without one, and never
+// off the site.
+func TestLogoutRedirectsABrowser(t *testing.T) {
+	for _, tc := range []struct {
+		name, target, body, want string
+	}{
+		{"ret in the form", LogoutPath, "ret=" + url.QueryEscape("/bye?x=1"), "/bye?x=1"},
+		{"ret in the query", LogoutPath + "?ret=" + url.QueryEscape("/bye?x=1"), "", "/bye?x=1"},
+		{"no ret", LogoutPath, "", "/"},
+		{"protocol-relative ret", LogoutPath, "ret=" + url.QueryEscape("//evil.example"), "/"},
+		{"absolute ret", LogoutPath, "ret=" + url.QueryEscape("https://evil.example/"), "/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			c, _ := h.signIn(t)
+			r := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+			w := h.logout(r, c)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303 (body = %s)", w.Code, w.Body)
+			}
+			if got := w.Header().Get("Location"); got != tc.want {
+				t.Errorf("Location = %q, want %q", got, tc.want)
+			}
+			if !cookieCleared(h.m, w) {
+				t.Error("the session cookie was not cleared")
+			}
+			if h.store.count() != 0 {
+				t.Error("the session record survived the logout")
+			}
+		})
+	}
+}
+
+// A form on another site must not sign a visitor out. The cookie would not reach the record, but the
+// answer would still clear it in the browser.
+func TestLogoutRefusesAnotherSite(t *testing.T) {
+	h := newHarness(t)
+	c, _ := h.signIn(t)
+	r := httptest.NewRequest(http.MethodPost, LogoutPath, nil)
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	w := h.logout(r, c)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"cross_origin_request"`) {
+		t.Fatalf("status = %d, body = %s; want 403 cross_origin_request", w.Code, w.Body)
+	}
+	if len(w.Result().Cookies()) != 0 {
+		t.Errorf("the refusal set cookies: %v", w.Result().Cookies())
+	}
+	if h.store.count() != 1 {
+		t.Error("the refused logout deleted the session record")
+	}
+}
+
+// The same site, and a client that sends no fetch metadata at all (curl, a Go http.Client), sign out.
+func TestLogoutAdmitsTheSameSite(t *testing.T) {
+	for _, site := range []string{"same-origin", ""} {
+		t.Run("Sec-Fetch-Site="+site, func(t *testing.T) {
+			h := newHarness(t)
+			c, _ := h.signIn(t)
+			r := httptest.NewRequest(http.MethodPost, LogoutPath, nil)
+			if site != "" {
+				r.Header.Set("Sec-Fetch-Site", site)
+			}
+			w := h.logout(r, c)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303 (body = %s)", w.Code, w.Body)
+			}
+			if !cookieCleared(h.m, w) {
+				t.Error("the session cookie was not cleared")
+			}
+			if h.store.count() != 0 {
+				t.Error("the session record survived the logout")
+			}
+		})
+	}
+}
+
+// logout sends r through the routes Routes mounts, with the session cookie when there is one.
+func (h *harness) logout(r *http.Request, cookie *http.Cookie) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	h.m.Routes(mux)
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	return w
 }
 
 // Signing in again ends the session the browser was holding. A copy taken off that cookie beforehand

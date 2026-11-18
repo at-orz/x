@@ -108,6 +108,7 @@ type Manager struct {
 	interactive []Method
 
 	live *liveSessions
+	cop  *http.CrossOriginProtection
 
 	// refreshing is one in-flight revalidation per session id. Every tab of one browser polls, so they
 	// reach the refresh window within the same second, and an authority that rotates the refresh token
@@ -165,6 +166,7 @@ func New(o Options) (*Manager, error) {
 	}
 	m.sessionCookie = m.CookieName("session")
 	m.live = newLiveSessions(m.idleTTL)
+	m.cop = http.NewCrossOriginProtection()
 	return m, nil
 }
 
