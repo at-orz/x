@@ -55,22 +55,55 @@ type fakeIdP struct {
 	clientID    string
 	secret      string
 
-	refreshes int
+	// authzEndpoint and tokenEndpoint replace the endpoints the discovery document advertises; discoRedirect
+	// makes discovery answer 307 to it instead.
+	authzEndpoint string
+	tokenEndpoint string
+	discoRedirect string
+
+	// requests counts every request that reached this provider, discoveries the discovery fetches among them.
+	requests    int
+	discoveries int
+	refreshes   int
 	// handedOut is every refresh token this provider issued, in order, so that rotation is visible.
 	handedOut []string
 }
 
+// newFakeIdP serves over TLS, with the certificate tlsClient trusts.
 func newFakeIdP(t *testing.T) *fakeIdP {
+	t.Helper()
+	return startFakeIdP(t, httptest.NewTLSServer)
+}
+
+// newPlainFakeIdP serves over plain http, which only a provider with InsecureAllowHTTP may talk to.
+func newPlainFakeIdP(t *testing.T) *fakeIdP {
+	t.Helper()
+	return startFakeIdP(t, httptest.NewServer)
+}
+
+func startFakeIdP(t *testing.T, start func(http.Handler) *httptest.Server) *fakeIdP {
 	t.Helper()
 	f := &fakeIdP{sub: "alice", exp: time.Now().Add(time.Hour), authMethods: []string{"client_secret_basic"}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.discoveries++
+		if f.discoRedirect != "" {
+			http.Redirect(w, r, f.discoRedirect, http.StatusTemporaryRedirect)
+			return
+		}
+		authz, token := f.srv.URL+"/authorize", f.srv.URL+"/token"
+		if f.authzEndpoint != "" {
+			authz = f.authzEndpoint
+		}
+		if f.tokenEndpoint != "" {
+			token = f.tokenEndpoint
+		}
 		writeJSON(w, map[string]any{
 			"issuer":                                f.srv.URL,
-			"authorization_endpoint":                f.srv.URL + "/authorize",
-			"token_endpoint":                        f.srv.URL + "/token",
+			"authorization_endpoint":                authz,
+			"token_endpoint":                        token,
 			"token_endpoint_auth_methods_supported": f.authMethods,
 		})
 	})
@@ -108,7 +141,12 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		}
 		writeJSON(w, body)
 	})
-	f.srv = httptest.NewServer(mux)
+	f.srv = start(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.requests++
+		f.mu.Unlock()
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(f.srv.Close)
 	return f
 }
@@ -158,6 +196,12 @@ func (f *fakeIdP) latestToken() string {
 		return ""
 	}
 	return f.handedOut[len(f.handedOut)-1]
+}
+
+func (f *fakeIdP) counts() (requests, discoveries int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests, f.discoveries
 }
 
 func (f *fakeIdP) refreshCount() int {
@@ -295,6 +339,14 @@ func (l *logBuf) String() string {
 	return l.b.String()
 }
 
+// tlsClient trusts the one certificate every httptest TLS server shares, which is how the provider in a
+// test reaches a fakeIdP over TLS.
+var tlsClient = sync.OnceValue(func() *http.Client {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	return srv.Client()
+})
+
 var testKey = []byte("0123456789abcdef0123456789abcdef")
 
 // env is a Manager on a countingStore with one Provider "corp" at a fake IdP, admitting alice.
@@ -327,7 +379,7 @@ func newEnv(t *testing.T, issuer string, opts ...func(*auth.Options, *Options)) 
 		Log: slog.New(slog.NewTextHandler(e.logs, nil)),
 	}
 	cfg := Config{Issuer: issuer, ClientID: "test-client", ClientSecret: "test-client-secret"}
-	po := Options{Name: "corp", Config: func() (Config, bool) { return cfg, true }}
+	po := Options{Name: "corp", Config: func() (Config, bool) { return cfg, true }, HTTPClient: tlsClient()}
 	for _, f := range opts {
 		f(&ao, &po)
 	}

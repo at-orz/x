@@ -268,7 +268,7 @@ func TestUnconfiguredIs503(t *testing.T) {
 // nothing and a log that says nothing with it would leave the failure unaccounted for anywhere.
 func TestAFailureTellsTheLogAndNotTheBrowser(t *testing.T) {
 	t.Run("the provider cannot be reached", func(t *testing.T) {
-		down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		down := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 		}))
 		t.Cleanup(down.Close)
@@ -609,7 +609,7 @@ func TestTwoProviders(t *testing.T) {
 	})
 	e.allow("alice", "bob")
 	cfg := Config{Issuer: partnerIdP.srv.URL, ClientID: "test-client", ClientSecret: "test-client-secret"}
-	partner, err := New(e.m, Options{Name: "partner", Config: func() (Config, bool) { return cfg, true }})
+	partner, err := New(e.m, Options{Name: "partner", Config: func() (Config, bool) { return cfg, true }, HTTPClient: tlsClient()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,4 +739,157 @@ func TestConfigValidate(t *testing.T) {
 			t.Errorf("%s: Validate accepted it", name)
 		}
 	}
+}
+
+// The provider works on its own copy of the host's client, so wrapping CheckRedirect leaves the host's
+// client as it was.
+func TestHTTPClientIsNotMutated(t *testing.T) {
+	hc := &http.Client{}
+	e := newEnv(t, "https://idp.example", func(_ *auth.Options, o *Options) { o.HTTPClient = hc })
+	if hc.CheckRedirect != nil {
+		t.Error("New set CheckRedirect on the host's client")
+	}
+	if e.p.hc == hc || e.p.hc.CheckRedirect == nil {
+		t.Error("the provider does not check redirects on a copy of its own")
+	}
+}
+
+// A redirect off https is refused before anything is sent to where it points.
+func TestRedirectToHTTPRefused(t *testing.T) {
+	var mu sync.Mutex
+	reached := 0
+	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		reached++
+	}))
+	t.Cleanup(plain.Close)
+	f := newFakeIdP(t)
+	f.set(func(f *fakeIdP) { f.discoRedirect = plain.URL + "/.well-known/openid-configuration" })
+	e := newEnv(t, f.srv.URL)
+
+	w := httptest.NewRecorder()
+	e.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, e.p.loginPath, nil))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "oidc_discovery_failed") {
+		t.Errorf("%d %s, want 502 oidc_discovery_failed", w.Code, w.Body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reached != 0 {
+		t.Error("the redirect to plain http was followed")
+	}
+}
+
+// An invalid config is answered like a missing one, and the reason goes to the log alone.
+func TestInvalidConfigIs503(t *testing.T) {
+	f := newFakeIdP(t)
+	for name, cfg := range map[string]Config{
+		"http issuer": {Issuer: strings.Replace(f.srv.URL, "https://", "http://", 1), ClientID: "test-client",
+			ClientSecret: "test-client-secret"},
+		"no secret": {Issuer: f.srv.URL, ClientID: "test-client"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, f.srv.URL, func(_ *auth.Options, o *Options) {
+				o.Config = func() (Config, bool) { return cfg, true }
+			})
+			before, _ := f.counts()
+			for _, path := range []string{e.p.loginPath, e.p.callback + "?state=s&code=c"} {
+				w := httptest.NewRecorder()
+				e.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+				if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "oidc_unconfigured") {
+					t.Errorf("%s: %d %s, want 503 oidc_unconfigured", path, w.Code, w.Body)
+				}
+			}
+			if !strings.Contains(e.logs.String(), "OIDC configuration is invalid") {
+				t.Errorf("the log does not say the config is invalid: %s", e.logs)
+			}
+			if after, _ := f.counts(); after != before {
+				t.Errorf("the provider was contacted %d times", after-before)
+			}
+		})
+	}
+}
+
+// A config that turns invalid cannot be used to ask, which is not an answer about anyone either.
+func TestAnInvalidConfigKeepsItsSessions(t *testing.T) {
+	f := newFakeIdP(t)
+	var mu sync.Mutex
+	cfg := Config{Issuer: f.srv.URL, ClientID: "test-client", ClientSecret: "test-client-secret"}
+	e := newEnv(t, f.srv.URL, func(_ *auth.Options, o *Options) {
+		o.Config = func() (Config, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			return cfg, true
+		}
+	})
+	e.signIn(t, f)
+	sid, _ := e.store.only(t)
+	e.store.age(t, sid, time.Hour)
+	mu.Lock()
+	cfg.Issuer = strings.Replace(f.srv.URL, "https://", "http://", 1)
+	mu.Unlock()
+	if w := e.ask(t, e.cookieAt(t, sid, 5*time.Minute)); w.Code != http.StatusOK || e.store.count() != 1 {
+		t.Errorf("status = %d with %d records, want the session kept", w.Code, e.store.count())
+	}
+	if f.refreshCount() != 0 {
+		t.Error("a provider with an invalid config was asked")
+	}
+}
+
+// An https issuer may not hand the flow to an endpoint without TLS, and a document refused for that is not
+// kept for the next login.
+func TestDiscoveryRefusesHTTPEndpoints(t *testing.T) {
+	for name, change := range map[string]func(f *fakeIdP){
+		"http token endpoint":         func(f *fakeIdP) { f.tokenEndpoint = "http://idp.example/token" },
+		"http authorization endpoint": func(f *fakeIdP) { f.authzEndpoint = "http://idp.example/authorize" },
+		"relative endpoint":           func(f *fakeIdP) { f.tokenEndpoint = "/token" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeIdP(t)
+			f.set(change)
+			e := newEnv(t, f.srv.URL)
+			for range 2 {
+				w := httptest.NewRecorder()
+				e.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, e.p.loginPath, nil))
+				if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "oidc_discovery_failed") {
+					t.Errorf("%d %s, want 502 oidc_discovery_failed", w.Code, w.Body)
+				}
+			}
+			if _, n := f.counts(); n != 2 {
+				t.Errorf("discovery was fetched %d times, want 2: the refused document was cached", n)
+			}
+		})
+	}
+}
+
+func TestInsecureAllowHTTP(t *testing.T) {
+	t.Run("allowed", func(t *testing.T) {
+		f := newPlainFakeIdP(t)
+		e := newEnv(t, f.srv.URL, func(_ *auth.Options, o *Options) { o.InsecureAllowHTTP = true })
+		if !strings.Contains(e.logs.String(), "OIDC provider allows plain http") {
+			t.Errorf("the switch went unlogged: %s", e.logs)
+		}
+		e.signIn(t, f)
+		sid, _ := e.store.only(t)
+		e.store.age(t, sid, time.Hour)
+		if w := e.ask(t, e.cookieAt(t, sid, 5*time.Minute)); w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+		}
+		if f.refreshCount() != 1 {
+			t.Errorf("refreshes = %d, want 1", f.refreshCount())
+		}
+	})
+
+	t.Run("refused without the switch", func(t *testing.T) {
+		f := newPlainFakeIdP(t)
+		e := newEnv(t, f.srv.URL)
+		w := httptest.NewRecorder()
+		e.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, e.p.loginPath, nil))
+		if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "oidc_unconfigured") {
+			t.Errorf("%d %s, want 503 oidc_unconfigured", w.Code, w.Body)
+		}
+		if strings.Contains(e.logs.String(), "allows plain http") {
+			t.Errorf("a provider without the switch logged it: %s", e.logs)
+		}
+	})
 }

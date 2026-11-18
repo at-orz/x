@@ -42,9 +42,9 @@ type refreshState struct {
 }
 
 func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := p.config()
-	if !ok {
-		p.m.Fail(w, http.StatusServiceUnavailable, "oidc_unconfigured", web.Unconfigured)
+	cfg, err := p.loadConfig()
+	if err != nil {
+		p.failUnconfigured(w, err)
 		return
 	}
 	doc, err := p.discover(r.Context(), cfg.Issuer)
@@ -82,9 +82,9 @@ func (p *Provider) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := p.config()
-	if !ok {
-		p.m.Fail(w, http.StatusServiceUnavailable, "oidc_unconfigured", web.Unconfigured)
+	cfg, err := p.loadConfig()
+	if err != nil {
+		p.failUnconfigured(w, err)
 		return
 	}
 	var flow flowState
@@ -176,6 +176,15 @@ func (p *Provider) handleCallback(w http.ResponseWriter, r *http.Request) {
 		ret = "/"
 	}
 	http.Redirect(w, r, ret, http.StatusFound)
+}
+
+// failUnconfigured answers a login or callback with no usable configuration. The browser is told the same
+// whether the config is missing or invalid: why it is invalid is for whoever deploys, so it goes to the log.
+func (p *Provider) failUnconfigured(w http.ResponseWriter, err error) {
+	if !errors.Is(err, errUnconfigured) {
+		p.m.Log().Error("OIDC configuration is invalid", "provider", p.name, "err", err)
+	}
+	p.m.Fail(w, http.StatusServiceUnavailable, "oidc_unconfigured", web.Unconfigured)
 }
 
 // fail ends a callback that a second attempt would not fix. The reason is logged rather than answered:

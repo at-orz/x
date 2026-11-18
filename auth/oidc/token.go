@@ -37,6 +37,8 @@ func (p *Provider) discover(ctx context.Context, issuer string) (discovery, erro
 	}
 	p.mu.Unlock()
 
+	ctx, cancel := context.WithTimeout(ctx, tokenTimeout)
+	defer cancel()
 	u := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -61,6 +63,14 @@ func (p *Provider) discover(ctx context.Context, issuer string) (discovery, erro
 	}
 	if doc.AuthorizationEndpoint == "" || doc.TokenEndpoint == "" {
 		return discovery{}, fmt.Errorf("%s is missing authorization_endpoint or token_endpoint", u)
+	}
+	// An https issuer pointing at a plain http token endpoint would bring back exactly what TLS is relied on
+	// to rule out; see the package comment.
+	for _, ep := range []string{doc.AuthorizationEndpoint, doc.TokenEndpoint} {
+		epu, err := url.Parse(ep)
+		if err != nil || epu.Host == "" || !schemeOK(epu, p.insecure) {
+			return discovery{}, fmt.Errorf("%s advertises the endpoint %q, which is not an https URL", u, ep)
+		}
 	}
 
 	p.mu.Lock()
@@ -146,6 +156,8 @@ func (p *Provider) postToken(ctx context.Context, cfg Config, doc discovery, for
 		form.Set("client_id", cfg.ClientID)
 		form.Set("client_secret", cfg.ClientSecret)
 	}
+	ctx, cancel := context.WithTimeout(ctx, tokenTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, doc.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return tokenResponse{}, err

@@ -14,9 +14,14 @@ import (
 // account is still good without anything happening in the browser. Sending the browser to the provider
 // once an hour instead would reload the page and cut every open connection with it.
 func (p *Provider) Revalidate(ctx context.Context, rec auth.Record) (auth.Record, error) {
-	cfg, ok := p.config()
-	if !ok {
-		return rec, errors.New("the provider is not configured")
+	// A config that is missing or invalid is a failure to ask, not an answer about the account, so neither
+	// ends the session.
+	cfg, err := p.loadConfig()
+	if errors.Is(err, errUnconfigured) {
+		return rec, err
+	}
+	if err != nil {
+		return rec, fmt.Errorf("the provider configuration is invalid: %w", err)
 	}
 	var st refreshState
 	if err := json.Unmarshal(rec.State, &st); err != nil || st.RefreshToken == "" {
