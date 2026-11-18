@@ -25,6 +25,7 @@ const (
 	// TicketStale covers a ticket that is missing, already spent or expired. To whoever is looking at the
 	// browser these are one event, and none of them is theirs to act on; which one it was goes to the log.
 	TicketStale = "this sign-in link is not valid any more"
+	CrossOrigin = "this request came from another site"
 )
 
 // IsTLS honours the X-Forwarded-Proto of a reverse proxy terminating TLS in front: behind one the

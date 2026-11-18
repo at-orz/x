@@ -2,15 +2,29 @@
 // cannot answer an interactive prompt at an identity provider, such as an automated browser or an agent.
 //
 // The host writes a ticket (Method.Issue, typically from a command line) and hands out the path it
-// returns; opening that path spends the ticket and starts a session with a fixed deadline. From the
-// browser on it is an ordinary session of the auth.Manager — the same cookie, the same record, the same
-// Require — except that nothing revalidates it: its deadline is what ends it.
+// returns. Opening that path spends nothing: it serves a page that posts the ticket back at once, or
+// offers a button to a browser without JavaScript, and that POST spends the ticket and starts a session
+// with a fixed deadline. From the browser on it is an ordinary session of the auth.Manager — the same
+// cookie, the same record, the same Require — except that nothing revalidates it: its deadline is what
+// ends it.
+//
+// The two steps are there because whatever fetches a link to preview it, a chat client or a mail
+// scanner, would otherwise spend the ticket before the person or agent it was meant for got to open it.
+// A fetcher that runs JavaScript still posts the page and spends it; one that does not, never does. A
+// scripted client may skip the page and POST t=<nonce> to the path itself.
+//
+// The POST refuses a browser request from another site, so that the page is the only way a browser
+// reaches it. That check reads Sec-Fetch-Site, and falls back to comparing Origin with Host when a
+// browser sends none, which a reverse proxy rewriting Host can make misjudge.
 package mint
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -54,6 +68,7 @@ type Method struct {
 	name    string
 	tickets Tickets
 	path    string
+	cop     *http.CrossOriginProtection
 }
 
 var namePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -69,7 +84,8 @@ func New(m *auth.Manager, o Options) (*Method, error) {
 	if o.Tickets == nil {
 		return nil, errors.New("mint: Options.Tickets is required")
 	}
-	mt := &Method{m: m, name: o.Name, tickets: o.Tickets, path: "/auth/mint/" + o.Name}
+	mt := &Method{m: m, name: o.Name, tickets: o.Tickets, path: "/auth/mint/" + o.Name,
+		cop: http.NewCrossOriginProtection()}
 	if err := m.Register(mt); err != nil {
 		return nil, err
 	}
@@ -89,7 +105,9 @@ func (mt *Method) Revalidate(_ context.Context, rec auth.Record) (auth.Record, e
 }
 
 // Issue writes a ticket for a session of subject lasting sessionTTL from its redemption, and returns the
-// path that redeems it, for a host command to print. The path is a credential until it is spent.
+// path that redeems it, for a host command to print. Opening the path in a browser signs in; a scripted
+// client may instead POST its t to the path without the query. The path is a credential until it is
+// spent.
 func (mt *Method) Issue(ctx context.Context, subject string, sessionTTL time.Duration) (path string, err error) {
 	if subject == "" {
 		return "", errors.New("mint: a ticket needs a subject")
@@ -104,13 +122,61 @@ func (mt *Method) Issue(ctx context.Context, subject string, sessionTTL time.Dur
 	return mt.path + "?" + url.Values{"t": {nonce}}.Encode(), nil
 }
 
-// Routes mounts GET /auth/mint/<name>, which needs no session itself: holding the ticket is what stands
-// in for a login.
+// Routes mounts /auth/mint/<name>, which needs no session itself: holding the ticket is what stands in
+// for a login. A GET serves the page that posts the ticket, and the POST spends it.
 func (mt *Method) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET "+mt.path, mt.handleRedeem)
+	mux.HandleFunc("GET "+mt.path, mt.handleConfirm)
+	mux.HandleFunc("POST "+mt.path, mt.handleRedeem)
+}
+
+// confirmScript is allowed by its hash rather than by a nonce per response: it never changes, and taking
+// the hash from the very constant the template inlines keeps the two from drifting apart.
+const confirmScript = `document.forms[0].submit()`
+
+var confirmScriptHash = func() string {
+	sum := sha256.Sum256([]byte(confirmScript))
+	return "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+}()
+
+// The button stays visible for a browser that runs no script; the script comes after the form so that
+// the form exists when it runs.
+var confirmPage = template.Must(template.New("confirm").Parse(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+<form method="post" action="{{.Action}}"><input type="hidden" name="t" value="{{.Nonce}}"><button type="submit">Sign in</button></form>
+<script>` + confirmScript + `</script>
+</body></html>
+`))
+
+// handleConfirm serves the page that posts a ticket back, without looking the ticket up: that would need
+// a read of Tickets that does not destroy, a contract change for every store, only to show an error one
+// round trip sooner.
+func (mt *Method) handleConfirm(w http.ResponseWriter, r *http.Request) {
+	nonce := r.URL.Query().Get("t")
+	if nonce == "" {
+		mt.m.Log().Warn("a sign-in link arrived carrying no ticket", "method", mt.name, "remote", r.RemoteAddr)
+		mt.m.Fail(w, http.StatusBadRequest, "mint_ticket_stale", web.TicketStale)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	// The page carries the nonce, and so does the URL it was opened at.
+	h.Set("Cache-Control", "no-store")
+	h.Set("Referrer-Policy", "no-referrer")
+	// frame-ancestors keeps another site from loading the page in a frame, where it would submit itself
+	// without anybody seeing it.
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src '"+confirmScriptHash+
+		"'; form-action 'self'; frame-ancestors 'none'")
+	if err := confirmPage.Execute(w, struct{ Action, Nonce string }{mt.path, nonce}); err != nil {
+		mt.m.Log().Warn("writing the sign-in page failed", "method", mt.name, "err", err)
+	}
 }
 
 // handleRedeem spends a ticket and hands back a session.
+//
+// The nonce is read from the form body alone, never the query, which keeps it out of the access log of
+// this request. A browser request from another site is refused before the ticket is touched, so the
+// ticket survives a form posted at it from elsewhere.
 //
 // It takes no ret parameter, unlike a login. Minting is begun on the host, where there is no page
 // somebody was trying to reach, and a parameter that redirects would be one more thing to hold to
@@ -119,7 +185,13 @@ func (mt *Method) Routes(mux *http.ServeMux) {
 // The nonce appears in no log line and no error: until it is spent it is a credential.
 func (mt *Method) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	log := mt.m.Log()
-	nonce := r.URL.Query().Get("t")
+	if err := mt.cop.Check(r); err != nil {
+		log.Warn("a sign-in link was posted from another site", "method", mt.name, "remote", r.RemoteAddr,
+			"err", err)
+		mt.m.Fail(w, http.StatusForbidden, "cross_origin_request", web.CrossOrigin)
+		return
+	}
+	nonce := r.PostFormValue("t")
 	if nonce == "" {
 		log.Warn("a sign-in link arrived carrying no ticket", "method", mt.name, "remote", r.RemoteAddr)
 		mt.m.Fail(w, http.StatusBadRequest, "mint_ticket_stale", web.TicketStale)

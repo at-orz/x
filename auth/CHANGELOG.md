@@ -14,3 +14,6 @@
   and in-process `mint.Tickets`.
 - `auth/store/storetest`: the `Store` and `mint.Tickets` contracts as test suites any implementation
   runs.
+- `auth/mint`: opening a sign-in link serves a page that submits itself (a button without
+  JavaScript), and only that POST spends the ticket, so a link preview no longer burns it.
+  Cross-origin POSTs are refused.

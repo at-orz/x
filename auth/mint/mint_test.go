@@ -2,11 +2,14 @@ package mint_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -101,10 +104,20 @@ func (e *env) issue(t *testing.T, ttl time.Duration) string {
 	return path
 }
 
-// redeem opens a sign-in link the way a browser would, optionally carrying the session cookie that
-// browser already held.
-func (e *env) redeem(path string, held *http.Cookie) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(http.MethodGet, path, nil)
+// open is a bare GET of a path: a browser's first step, or a link preview's only one.
+func (e *env) open(path string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	e.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	return w
+}
+
+// post sends t=<nonce> as a form to path, with the headers given.
+func (e *env) post(path, nonce string, header map[string]string, held *http.Cookie) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(url.Values{"t": {nonce}}.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range header {
+		r.Header.Set(k, v)
+	}
 	if held != nil {
 		r.AddCookie(held)
 	}
@@ -113,10 +126,37 @@ func (e *env) redeem(path string, held *http.Cookie) *httptest.ResponseRecorder 
 	return w
 }
 
+var sameOrigin = map[string]string{"Sec-Fetch-Site": "same-origin"}
+
+// redeem opens a sign-in link the way a browser would, optionally carrying the session cookie that
+// browser already held: it opens the page, and posts its form. A page that does not come back is the
+// answer.
+func (e *env) redeem(t *testing.T, path string, held *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	page := e.open(path)
+	if page.Code != http.StatusOK {
+		return page
+	}
+	if !strings.Contains(page.Body.String(), `<form method="post" action="/auth/mint/`) {
+		t.Fatalf("the page has no form: %s", page.Body)
+	}
+	bare, _, _ := strings.Cut(path, "?")
+	return e.post(bare, nonceOf(t, path), sameOrigin, held)
+}
+
+func nonceOf(t *testing.T, path string) string {
+	t.Helper()
+	u, err := url.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query().Get("t")
+}
+
 // mintOne issues and redeems a ticket, returning the session cookie and its id.
 func (e *env) mintOne(t *testing.T, ttl time.Duration) (*http.Cookie, string) {
 	t.Helper()
-	w := e.redeem(e.issue(t, ttl), nil)
+	w := e.redeem(t, e.issue(t, ttl), nil)
 	if w.Code != http.StatusFound {
 		t.Fatalf("the redemption gave status = %d, body = %s", w.Code, w.Body)
 	}
@@ -214,7 +254,7 @@ func TestIssueWritesATicket(t *testing.T) {
 // revalidate, and the deadline is there instead.
 func TestMintRedeemsATicketIntoASession(t *testing.T) {
 	e := newEnv(t, nil)
-	w := e.redeem(e.issue(t, 24*time.Hour), nil)
+	w := e.redeem(t, e.issue(t, 24*time.Hour), nil)
 	if w.Code != http.StatusFound {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
 	}
@@ -254,10 +294,10 @@ func TestMintRedeemsATicketIntoASession(t *testing.T) {
 func TestMintSpendsATicketOnce(t *testing.T) {
 	e := newEnv(t, nil)
 	path := e.issue(t, time.Hour)
-	if w := e.redeem(path, nil); w.Code != http.StatusFound {
+	if w := e.redeem(t, path, nil); w.Code != http.StatusFound {
 		t.Fatalf("the first redemption gave status = %d", w.Code)
 	}
-	w := e.redeem(path, nil)
+	w := e.redeem(t, path, nil)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "mint_ticket_stale") {
 		t.Errorf("the second redemption gave %d %s, want 400 mint_ticket_stale", w.Code, w.Body)
 	}
@@ -275,7 +315,7 @@ func TestMintRefusesALinkItCannotSpend(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t, nil)
-			w := e.redeem(path, nil)
+			w := e.redeem(t, path, nil)
 			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "mint_ticket_stale") {
 				t.Errorf("%d %s, want 400 mint_ticket_stale", w.Code, w.Body)
 			}
@@ -292,7 +332,7 @@ func TestMintRefusesASubjectThatLeftThePolicy(t *testing.T) {
 	e := newEnv(t, nil)
 	path := e.issue(t, time.Hour)
 	e.allow("someone-else")
-	w := e.redeem(path, nil)
+	w := e.redeem(t, path, nil)
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "subject_not_allowed") {
 		t.Errorf("%d %s, want 403 subject_not_allowed", w.Code, w.Body)
 	}
@@ -305,7 +345,7 @@ func TestMintRefusesASubjectThatLeftThePolicy(t *testing.T) {
 // merely unreachable would send somebody to the host to issue another one for nothing.
 func TestMintTellsAnUnreachableStoreFromASpentTicket(t *testing.T) {
 	e := newEnv(t, func(s *memory.Store) mint.Tickets { return brokenTickets{s.Tickets()} })
-	w := e.redeem("/auth/mint/mint?t=the-nonce", nil)
+	w := e.redeem(t, "/auth/mint/mint?t=the-nonce", nil)
 	if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), "mint_ticket_stale") {
 		t.Errorf("%d %s, want 503 and not a dead link", w.Code, w.Body)
 	}
@@ -391,7 +431,7 @@ func TestAMintedCookieExpiresWithItsSession(t *testing.T) {
 func TestRedeemingATicketEndsTheSessionItReplaces(t *testing.T) {
 	e := newEnv(t, nil)
 	held, oldSID := e.mintOne(t, time.Hour)
-	w := e.redeem(e.issue(t, time.Hour), held)
+	w := e.redeem(t, e.issue(t, time.Hour), held)
 	if w.Code != http.StatusFound {
 		t.Fatalf("the redemption gave status = %d, body = %s", w.Code, w.Body)
 	}
@@ -407,16 +447,134 @@ func TestRedeemingATicketEndsTheSessionItReplaces(t *testing.T) {
 func TestTheNonceIsInNoLogLine(t *testing.T) {
 	e := newEnv(t, nil)
 	path := e.issue(t, time.Hour)
-	nonce := path[strings.Index(path, "t=")+2:]
-	e.redeem(path, nil)
-	e.redeem(path, nil)
+	nonce := nonceOf(t, path)
+	e.post("/auth/mint/mint", nonce, map[string]string{"Sec-Fetch-Site": "cross-site"}, nil)
+	e.redeem(t, path, nil)
+	e.redeem(t, path, nil)
 	e.allow()
-	e.redeem(e.issue(t, time.Hour), nil)
+	e.redeem(t, e.issue(t, time.Hour), nil)
 	if strings.Contains(e.logs.String(), nonce) {
 		t.Errorf("the log carries the nonce: %s", e.logs)
 	}
-	if !strings.Contains(e.logs.String(), "already spent") {
-		t.Errorf("the spent link left no trace: %s", e.logs)
+	for _, trace := range []string{"already spent", "from another site"} {
+		if !strings.Contains(e.logs.String(), trace) {
+			t.Errorf("the log has no %q: %s", trace, e.logs)
+		}
+	}
+}
+
+// A link preview or a scanner fetching the link leaves the ticket for whoever it was meant for.
+func TestOpeningALinkDoesNotSpendIt(t *testing.T) {
+	e := newEnv(t, nil)
+	path := e.issue(t, time.Hour)
+	for range 2 {
+		if w := e.open(path); w.Code != http.StatusOK || sessionCookieOf(w) != nil {
+			t.Fatalf("opening the link gave %d and cookie %v", w.Code, sessionCookieOf(w))
+		}
+	}
+	w := e.redeem(t, path, nil)
+	if w.Code != http.StatusFound || sessionCookieOf(w) == nil {
+		t.Errorf("the redemption after two openings gave %d %s", w.Code, w.Body)
+	}
+}
+
+var scriptPattern = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// The page must run under its own policy, or a browser would block the script and the sign-in would
+// stall on a button nobody was told to press.
+func TestTheConfirmPageSubmitsItselfUnderItsCSP(t *testing.T) {
+	e := newEnv(t, nil)
+	w := e.open(e.issue(t, time.Hour))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+	}
+	h := w.Header()
+	for k, v := range map[string]string{
+		"Content-Type":    "text/html; charset=utf-8",
+		"Cache-Control":   "no-store",
+		"Referrer-Policy": "no-referrer",
+	} {
+		if h.Get(k) != v {
+			t.Errorf("%s = %q, want %q", k, h.Get(k), v)
+		}
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `<form method="post" action="/auth/mint/mint">`) {
+		t.Errorf("the form does not post to the bare path: %s", body)
+	}
+	if !strings.Contains(body, `<button type="submit">`) {
+		t.Errorf("the page has no button for a browser without JavaScript: %s", body)
+	}
+	scripts := scriptPattern.FindAllStringSubmatch(body, -1)
+	if len(scripts) != 1 || strings.Count(body, "<script") != 1 {
+		t.Fatalf("the page has %d scripts: %s", strings.Count(body, "<script"), body)
+	}
+	sum := sha256.Sum256([]byte(scripts[0][1]))
+	want := "default-src 'none'; script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) +
+		"'; form-action 'self'; frame-ancestors 'none'"
+	if got := h.Get("Content-Security-Policy"); got != want {
+		t.Errorf("Content-Security-Policy = %q, want %q", got, want)
+	}
+}
+
+func TestTheConfirmPageEscapesTheTicket(t *testing.T) {
+	e := newEnv(t, nil)
+	w := e.open("/auth/mint/mint?" + url.Values{"t": {`<"x">`}}.Encode())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `<"x">`) || !strings.Contains(w.Body.String(), `&lt;&#34;x&#34;&gt;`) {
+		t.Errorf("the ticket was echoed unescaped: %s", w.Body)
+	}
+}
+
+func TestALinkWithNoTicketIsRefusedOnBothRoutes(t *testing.T) {
+	e := newEnv(t, nil)
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"GET":  e.open("/auth/mint/mint"),
+		"POST": e.post("/auth/mint/mint", "", sameOrigin, nil),
+	} {
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "mint_ticket_stale") {
+			t.Errorf("%s gave %d %s, want 400 mint_ticket_stale", name, w.Code, w.Body)
+		}
+	}
+}
+
+// Another site posting a form at the path, with a ticket of its own, would sign a visitor in as its
+// subject; and posting one it found would burn it. Either way the ticket is left alone.
+func TestACrossSiteFormCannotSpendATicket(t *testing.T) {
+	e := newEnv(t, nil)
+	path := e.issue(t, time.Hour)
+	w := e.post("/auth/mint/mint", nonceOf(t, path), map[string]string{"Sec-Fetch-Site": "cross-site"}, nil)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "cross_origin_request") {
+		t.Errorf("%d %s, want 403 cross_origin_request", w.Code, w.Body)
+	}
+	if sessionCookieOf(w) != nil {
+		t.Error("the refused post handed out a session cookie anyway")
+	}
+	if w := e.redeem(t, path, nil); w.Code != http.StatusFound {
+		t.Errorf("the ticket did not survive the refused post: %d %s", w.Code, w.Body)
+	}
+}
+
+// A client that is not a browser sends neither Sec-Fetch-Site nor Origin, and needs no page.
+func TestAScriptedClientRedeemsWithoutThePage(t *testing.T) {
+	e := newEnv(t, nil)
+	w := e.post("/auth/mint/mint", nonceOf(t, e.issue(t, time.Hour)), nil, nil)
+	if w.Code != http.StatusFound || sessionCookieOf(w) == nil {
+		t.Errorf("%d %s, want 302 with a session", w.Code, w.Body)
+	}
+}
+
+func TestTheNonceInTheQueryOfAPostIsIgnored(t *testing.T) {
+	e := newEnv(t, nil)
+	path := e.issue(t, time.Hour)
+	w := e.post(path, "", sameOrigin, nil)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "mint_ticket_stale") {
+		t.Errorf("%d %s, want 400 mint_ticket_stale", w.Code, w.Body)
+	}
+	if w := e.redeem(t, path, nil); w.Code != http.StatusFound {
+		t.Errorf("the ticket did not survive: %d %s", w.Code, w.Body)
 	}
 }
 
