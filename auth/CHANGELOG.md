@@ -26,3 +26,5 @@
   still gets `204`. A POST from another site is refused with `403 cross_origin_request`.
 - `auth`: `Manager.Optional` serves a request with or without a session, so a public page can show
   who is signed in; it admits, revalidates and clears cookies as `Require` does.
+- `auth/oidc`: `AllowEmails`, an allow list of verified `email` claims for a provider whose `sub` is
+  opaque, matched without regard to case.

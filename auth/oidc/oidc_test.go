@@ -893,3 +893,31 @@ func TestInsecureAllowHTTP(t *testing.T) {
 		}
 	})
 }
+
+// AllowEmails through a whole sign-in: the email scope puts the claims in the ID token, and a removal
+// from the list refuses the session's next request.
+func TestAllowEmailsThroughASignIn(t *testing.T) {
+	f := newFakeIdP(t)
+	f.extra = map[string]any{"email": "alice@example.com", "email_verified": true}
+	var mu sync.Mutex
+	emails := []string{"alice@example.com"}
+	e := newEnv(t, f.srv.URL, func(ao *auth.Options, o *Options) {
+		o.Scopes = []string{"email"}
+		ao.Authorize = AllowEmails("corp", func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return emails
+		})
+	})
+	session := e.signIn(t, f)
+	if w := e.ask(t, session); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+	}
+
+	mu.Lock()
+	emails = nil
+	mu.Unlock()
+	if w := e.ask(t, session); w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d after alice left the list, want 401 (body = %s)", w.Code, w.Body)
+	}
+}
