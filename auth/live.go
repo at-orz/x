@@ -14,8 +14,8 @@ type liveSessions struct {
 	mu     sync.RWMutex
 	synced bool
 	ids    map[string]struct{}
-	// tomb holds the ids removed within the last sessionTTL, so a request that read a record just before
-	// its delete event landed cannot put it back. Ids are random and never reused; past sessionTTL every
+	// tomb holds the ids removed within the last interval, so a request that read a record just before
+	// its delete event landed cannot put it back. Ids are random and never reused; past one interval every
 	// older cookie has reached the refresh window, which reads the record anyway.
 	tomb map[string]time.Time
 
@@ -24,7 +24,9 @@ type liveSessions struct {
 	// another instance is read on the next request.
 	cache   map[string]cachedSession
 	idleTTL time.Duration
-	swept   time.Time
+	// revalidateEvery is the Manager's interval: how long a tombstone is kept.
+	revalidateEvery time.Duration
+	swept           time.Time
 }
 
 type cachedSession struct {
@@ -32,12 +34,13 @@ type cachedSession struct {
 	used time.Time
 }
 
-func newLiveSessions(idleTTL time.Duration) *liveSessions {
+func newLiveSessions(idleTTL, revalidateEvery time.Duration) *liveSessions {
 	return &liveSessions{
-		ids:     map[string]struct{}{},
-		tomb:    map[string]time.Time{},
-		cache:   map[string]cachedSession{},
-		idleTTL: idleTTL,
+		ids:             map[string]struct{}{},
+		tomb:            map[string]time.Time{},
+		cache:           map[string]cachedSession{},
+		idleTTL:         idleTTL,
+		revalidateEvery: revalidateEvery,
 	}
 }
 
@@ -106,7 +109,7 @@ func (l *liveSessions) dropLocked(id string) {
 	delete(l.cache, id)
 	l.tomb[id] = now
 	for t, at := range l.tomb {
-		if now.Sub(at) > sessionTTL {
+		if now.Sub(at) > l.revalidateEvery {
 			delete(l.tomb, t)
 		}
 	}

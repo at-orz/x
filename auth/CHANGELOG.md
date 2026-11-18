@@ -4,6 +4,8 @@
   `Require` middleware, revalidation through a registered `Method` with a grace window, deadline
   sessions, `Authorize` policies (`AllowSubjects`, `AnyOf`), and host values on a session (`Link`,
   `SetValue`).
+- `auth`: `Options.RevalidateEvery` sets how often a session goes back to its authority (default one
+  hour), and `Manager.SessionID` reads the session id of a cookie value.
 - `auth/oidc`: sign-in through an OpenID Connect provider (authorization code flow with PKCE), one
   registered `Provider` per provider, sessions revalidated by exchanging the refresh token. The
   provider refuses a non-https issuer or endpoint itself unless `Options.InsecureAllowHTTP` is set,

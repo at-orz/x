@@ -71,7 +71,7 @@ func (m *Manager) authenticate(w http.ResponseWriter, r *http.Request) (Session,
 
 	// The deadline is decided here, on every request and before anything reads the store, so the first
 	// request past it is the one refused. The record carries the same moment, but a comparison there
-	// would sit behind the refresh window and could give the session another half hour.
+	// would sit behind the refresh window and could give the session another half interval.
 	if s.Deadline != 0 && time.Now().After(time.Unix(s.Deadline, 0)) {
 		web.ClearCookie(w, r, m.sessionCookie)
 		return Session{}, fmt.Errorf("%w: the session reached its deadline", ErrEnded)
@@ -79,7 +79,7 @@ func (m *Manager) authenticate(w http.ResponseWriter, r *http.Request) (Session,
 
 	ctx := r.Context()
 	var sess Session
-	if time.Until(time.Unix(s.Exp, 0)) > refreshWindow {
+	if time.Until(time.Unix(s.Exp, 0)) > m.refreshWindow {
 		// The common case by far, and the one that has to stay cheap: a valid cookie is a signature check
 		// and two map lookups, with neither the store nor the authority in the path of a request.
 		sess, err = m.lookup(ctx, s.SID)

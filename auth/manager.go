@@ -14,24 +14,12 @@ import (
 )
 
 const (
-	// sessionTTL is how long a cookie is good for before this process goes back to the authority. It is
-	// not how long a session lasts: an active browser is revalidated hour after hour without noticing,
-	// and an idle one lasts until its record expires.
-	sessionTTL = time.Hour
-
-	// refreshWindow is how early the revalidation happens. Half of the cookie lifetime, so that a request
-	// arriving at any moment of an hour still finds a valid cookie while a failed revalidation is retried
-	// several times before it could matter.
-	refreshWindow = 30 * time.Minute
-
-	// refreshFloor is how recently a verification counts as this request's own. It follows from the two
-	// constants above rather than being a third number: the authority is asked once per hour and the
-	// question starts half an hour early, so a verification newer than half an hour belongs to this round.
-	refreshFloor = sessionTTL - refreshWindow
+	// defaultRevalidateEvery is Options.RevalidateEvery when unset.
+	defaultRevalidateEvery = time.Hour
 
 	// claimTTL is how long another instance's claim counts for. A revalidation cannot be outstanding for
 	// longer than a token request's timeout, so a claim older than this belongs to an instance that either
-	// finished, in which case VerifiedAt says so and refreshFloor answers first, or died holding it.
+	// finished, in which case VerifiedAt says so and the refresh floor answers first, or died holding it.
 	claimTTL = 15 * time.Second
 
 	defaultIdleTTL = 24 * time.Hour
@@ -54,6 +42,10 @@ type Options struct {
 	// session cannot outlive its own record, so different numbers would make the longer one pointless.
 	// Default 24h.
 	IdleTTL time.Duration
+	// RevalidateEvery is how long a session cookie is good for before this process goes back to the
+	// authority; revalidation starts in its second half. It is not how long a session lasts. At least 2s
+	// and at most IdleTTL. Default 1h.
+	RevalidateEvery time.Duration
 	// Link runs once per sign-in, after Authorize admits the identity, and returns the session's initial
 	// Values, typically the host's own user id for this identity. An error wrapping ErrNotAllowed refuses
 	// the sign-in with 403; any other with 503. Optional.
@@ -102,6 +94,19 @@ type Manager struct {
 	link          func(ctx context.Context, id Identity) (map[string]string, error)
 	loginURL      func(r *http.Request, ret string) string
 	writeError    func(w http.ResponseWriter, status int, code, message string)
+
+	// revalidateEvery is how long a cookie is good for before this process goes back to the authority. It
+	// is not how long a session lasts: an active browser is revalidated interval after interval without
+	// noticing, and an idle one lasts until its record expires.
+	revalidateEvery time.Duration
+	// refreshWindow is how early the revalidation happens. Half of the cookie lifetime, so that a request
+	// arriving at any moment of an interval still finds a valid cookie while a failed revalidation is
+	// retried several times before it could matter.
+	refreshWindow time.Duration
+	// refreshFloor is how recently a verification counts as this request's own. It follows from the two
+	// fields above rather than being a third number: the authority is asked once per interval and the
+	// question starts half an interval early, so a verification newer than that belongs to this round.
+	refreshFloor time.Duration
 
 	methodsMu   sync.RWMutex
 	methods     map[string]Method
@@ -161,11 +166,27 @@ func New(o Options) (*Manager, error) {
 	if m.idleTTL <= 0 {
 		m.idleTTL = defaultIdleTTL
 	}
+	m.revalidateEvery = o.RevalidateEvery
+	if m.revalidateEvery <= 0 {
+		m.revalidateEvery = defaultRevalidateEvery
+	}
+	switch {
+	case m.revalidateEvery < 2*time.Second:
+		// exp is stored in whole seconds and so truncated by up to one; below two seconds the refresh
+		// window would be all or nothing.
+		return nil, fmt.Errorf("auth: Options.RevalidateEvery %s is below 2s", m.revalidateEvery)
+	case m.revalidateEvery > m.idleTTL:
+		// An active session's record is kept alive by its revalidations, so revalidating less often than
+		// the record may sit idle would lose the record of a session in use.
+		return nil, fmt.Errorf("auth: Options.RevalidateEvery %s is above IdleTTL %s", m.revalidateEvery, m.idleTTL)
+	}
+	m.refreshWindow = m.revalidateEvery / 2
+	m.refreshFloor = m.revalidateEvery - m.refreshWindow
 	if m.writeError == nil {
 		m.writeError = writeJSONError
 	}
 	m.sessionCookie = m.CookieName("session")
-	m.live = newLiveSessions(m.idleTTL)
+	m.live = newLiveSessions(m.idleTTL, m.revalidateEvery)
 	m.cop = http.NewCrossOriginProtection()
 	return m, nil
 }

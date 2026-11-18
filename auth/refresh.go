@@ -70,7 +70,7 @@ func (m *Manager) refreshNow(ctx context.Context, sid string) (Session, error) {
 	// cookie, and the single flight only holds back the ones that overlap: a tab arriving a second after
 	// the revalidation finished would ask all over again. It is also the first of the two guards between
 	// instances: one taking over a session reads the VerifiedAt another wrote.
-	if time.Since(rec.VerifiedAt) < refreshFloor {
+	if time.Since(rec.VerifiedAt) < m.refreshFloor {
 		return sess, nil
 	}
 	if m.claimer != nil {
@@ -104,7 +104,7 @@ func (m *Manager) refreshNow(ctx context.Context, sid string) (Session, error) {
 	if err != nil {
 		if errors.Is(err, ErrEnded) {
 			// The one path on which the authority ends a session: the account was disabled, the token was
-			// revoked or expired. Answering this question every hour is what the arrangement is for.
+			// revoked or expired. Answering this question every interval is what the arrangement is for.
 			m.log.Info("the authority ended a session", "provider", rec.Provider, "subject", rec.Subject, "err", err)
 			if derr := m.store.Delete(ctx, sid); derr != nil {
 				m.log.Warn("deleting an ended session record failed", "err", derr)

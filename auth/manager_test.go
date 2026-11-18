@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewRefusesIncompleteOptions(t *testing.T) {
@@ -170,4 +172,98 @@ func setPaddingBit(t *testing.T, value string) string {
 		t.Fatalf("the signature does not end on a padded character: %q", value)
 	}
 	return value[:len(value)-1] + string(alphabet[i+1])
+}
+
+func TestNewBoundsRevalidateEvery(t *testing.T) {
+	allow := AllowSubjects("corp", func() []string { return []string{"alice"} })
+	with := func(every, idle time.Duration) Options {
+		return Options{Store: newFakeStore(), Key: testKey, Authorize: allow, RevalidateEvery: every, IdleTTL: idle}
+	}
+	for name, o := range map[string]Options{
+		"below two seconds":    with(time.Second, 0),
+		"above the idle TTL":   with(defaultIdleTTL+time.Second, 0),
+		"above a set idle TTL": with(2*time.Hour, time.Hour),
+	} {
+		if _, err := New(o); err == nil {
+			t.Errorf("%s: New accepted it", name)
+		}
+	}
+	for name, o := range map[string]Options{
+		"two seconds":    with(2*time.Second, 0),
+		"the idle TTL":   with(defaultIdleTTL, 0),
+		"a set idle TTL": with(time.Hour, time.Hour),
+	} {
+		if _, err := New(o); err != nil {
+			t.Errorf("%s: New refused it: %v", name, err)
+		}
+	}
+	m, err := New(with(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.revalidateEvery != time.Hour || m.refreshWindow != 30*time.Minute || m.refreshFloor != 30*time.Minute {
+		t.Errorf("the default interval is %s with window %s and floor %s, want 1h, 30m, 30m",
+			m.revalidateEvery, m.refreshWindow, m.refreshFloor)
+	}
+}
+
+// Both halves of the condition for a revalidation move with the interval: the cookie's distance from its
+// exp, and the record's distance from its last verification.
+func TestTheIntervalMovesTheWindowAndTheFloor(t *testing.T) {
+	tenMinutes := func(o *Options) { o.RevalidateEvery = 10 * time.Minute }
+	h := newHarness(t, tenMinutes)
+	_, sid := h.signIn(t)
+	h.age(t, sid, 6*time.Minute)
+	got := h.ask(t, h.cookieAt(t, sid, 6*time.Minute))
+	if got.Code != http.StatusOK || sessionCookieOf(h.m, got) != nil || h.method.callCount() != 0 {
+		t.Fatalf("a cookie 6m from its exp gave %d, a new cookie %t and %d revalidations, want the fast path",
+			got.Code, sessionCookieOf(h.m, got) != nil, h.method.callCount())
+	}
+	if got := h.ask(t, h.cookieAt(t, sid, 4*time.Minute)); got.Code != http.StatusOK {
+		t.Fatalf("a cookie in the window gave status = %d (body = %s)", got.Code, got.Body)
+	}
+	if n := h.method.callCount(); n != 1 {
+		t.Errorf("a record verified 6m ago was revalidated %d times, want 1", n)
+	}
+
+	fresh := newHarness(t, tenMinutes)
+	_, sid = fresh.signIn(t)
+	fresh.age(t, sid, 4*time.Minute)
+	if got := fresh.ask(t, fresh.cookieAt(t, sid, 4*time.Minute)); got.Code != http.StatusOK {
+		t.Fatalf("a cookie in the window gave status = %d (body = %s)", got.Code, got.Body)
+	}
+	if n := fresh.method.callCount(); n != 0 {
+		t.Errorf("a record verified 4m ago was revalidated %d times, want 0", n)
+	}
+}
+
+func TestASignInSetsExpOneIntervalOut(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.RevalidateEvery = 10 * time.Minute })
+	c, _ := h.signIn(t)
+	var s sessionState
+	if err := h.m.Open(c.Value, &s); err != nil {
+		t.Fatal(err)
+	}
+	// exp is in whole seconds, so it can fall up to a second short.
+	if until := time.Until(time.Unix(s.Exp, 0)); until <= 10*time.Minute-2*time.Second || until > 10*time.Minute {
+		t.Errorf("the cookie's exp is %s out, want 10m", until)
+	}
+}
+
+func TestSessionID(t *testing.T) {
+	h := newHarness(t)
+	c, sid := h.signIn(t)
+	if got, err := h.m.SessionID(c.Value); err != nil || got != sid {
+		t.Errorf("SessionID = %q, %v, want %q", got, err, sid)
+	}
+	if _, err := h.m.SessionID(flipSignature(t, c.Value)); err == nil {
+		t.Error("SessionID read a tampered cookie")
+	}
+	noSID, err := h.m.Seal(sessionState{Exp: time.Now().Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.m.SessionID(noSID); err == nil {
+		t.Error("SessionID read a cookie that names no session")
+	}
 }

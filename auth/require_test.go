@@ -67,7 +67,7 @@ func TestRevalidationHappensBeforeTheCookieExpires(t *testing.T) {
 	if err := h.m.Open(fresh.Value, &s); err != nil {
 		t.Fatal(err)
 	}
-	if time.Until(time.Unix(s.Exp, 0)) <= refreshWindow {
+	if time.Until(time.Unix(s.Exp, 0)) <= h.m.refreshWindow {
 		t.Errorf("the new cookie expires in %s, inside the refresh window again", time.Until(time.Unix(s.Exp, 0)))
 	}
 }
@@ -159,7 +159,7 @@ func TestADeletedRecordEndsTheSession(t *testing.T) {
 	if err := h.store.Delete(context.Background(), sid); err != nil {
 		t.Fatal(err)
 	}
-	for name, until := range map[string]time.Duration{"outside the window": sessionTTL, "inside": 5 * time.Minute} {
+	for name, until := range map[string]time.Duration{"outside the window": h.m.revalidateEvery, "inside": 5 * time.Minute} {
 		w := h.ask(t, h.cookieAt(t, sid, until))
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: status = %d, want 401 (body = %s)", name, w.Code, w.Body)
@@ -530,7 +530,7 @@ func TestAnUnreadableStoreTurnsAwayOnlyUnseenSessions(t *testing.T) {
 	}
 
 	cold := newHarnessOn(t, h.store, nil)
-	got := cold.ask(t, cold.cookieAt(t, sid, sessionTTL))
+	got := cold.ask(t, cold.cookieAt(t, sid, cold.m.revalidateEvery))
 	if got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), "session_store_unavailable") {
 		t.Errorf("an unseen session gave %d %s, want 503 session_store_unavailable", got.Code, got.Body)
 	}
@@ -594,7 +594,7 @@ func TestADeadlineSession(t *testing.T) {
 
 	t.Run("past its deadline it is refused without a read", func(t *testing.T) {
 		before := h.store.getCount()
-		got := h.ask(t, h.cookieWith(t, sessionState{SID: sid, Exp: time.Now().Add(sessionTTL).Unix(),
+		got := h.ask(t, h.cookieWith(t, sessionState{SID: sid, Exp: time.Now().Add(h.m.revalidateEvery).Unix(),
 			Deadline: time.Now().Add(-time.Minute).Unix()}))
 		if got.Code != http.StatusUnauthorized {
 			t.Errorf("status = %d, want 401", got.Code)
@@ -843,7 +843,7 @@ func TestAnUnwritableStoreRefusesTheSignIn(t *testing.T) {
 }
 
 func TestARemovedIDStaysRemoved(t *testing.T) {
-	l := newLiveSessions(time.Hour)
+	l := newLiveSessions(time.Hour, time.Hour)
 	l.apply(Event{Kind: Loaded})
 	l.drop("gone")
 	l.remember(Session{ID: "gone"})
@@ -860,7 +860,7 @@ func TestARemovedIDStaysRemoved(t *testing.T) {
 }
 
 func TestAnUnsyncedSetHoldsNothing(t *testing.T) {
-	l := newLiveSessions(time.Hour)
+	l := newLiveSessions(time.Hour, time.Hour)
 	l.remember(Session{ID: "seen"})
 	if l.has("seen") {
 		t.Error("has answered for an id while the set was never in sync")
@@ -982,7 +982,7 @@ func TestOptional(t *testing.T) {
 	t.Run("deadline passed", func(t *testing.T) {
 		h := newHarness(t)
 		_, sid := h.signIn(t)
-		w, _, ok := h.optional(page(), h.cookieWith(t, sessionState{SID: sid, Exp: time.Now().Add(sessionTTL).Unix(),
+		w, _, ok := h.optional(page(), h.cookieWith(t, sessionState{SID: sid, Exp: time.Now().Add(h.m.revalidateEvery).Unix(),
 			Deadline: time.Now().Add(-time.Minute).Unix()}))
 		if w.Code != http.StatusOK || ok {
 			t.Errorf("status = %d, session = %t, want 200 without one", w.Code, ok)
@@ -1010,7 +1010,7 @@ func TestOptional(t *testing.T) {
 		_, sid := h.signIn(t)
 		h.store.setBroken(errUnreachableStore)
 		cold := newHarnessOn(t, h.store, nil)
-		w, _, ok := cold.optional(page(), cold.cookieAt(t, sid, sessionTTL))
+		w, _, ok := cold.optional(page(), cold.cookieAt(t, sid, cold.m.revalidateEvery))
 		if w.Code != http.StatusOK || ok {
 			t.Errorf("status = %d, session = %t, want 200 without one", w.Code, ok)
 		}

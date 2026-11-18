@@ -63,6 +63,19 @@ func (m *Manager) Open(value string, out any) error {
 	return json.Unmarshal(body, out)
 }
 
+// SessionID reads the id of the session a session cookie value names, after checking its signature. It
+// is how a test or a tool finds the record behind a cookie without depending on the cookie's format.
+func (m *Manager) SessionID(cookie string) (string, error) {
+	var s sessionState
+	if err := m.Open(cookie, &s); err != nil {
+		return "", err
+	}
+	if s.SID == "" {
+		return "", errors.New("the session cookie carries no session")
+	}
+	return s.SID, nil
+}
+
 // MAC is HMAC-SHA256 of data under Options.Key. Besides signing cookies, it lets a method derive a
 // name from a secret, so that a cookie name does not spell what it belongs to while staying stable.
 func (m *Manager) MAC(data string) []byte {
@@ -75,13 +88,13 @@ func (m *Manager) MAC(data string) []byte {
 // idle, while the exp inside it is when this process next goes back to the authority.
 //
 // The two are deliberately different lengths. A cookie expiring with its exp would be dropped by the
-// browser after an hour, so returning to a tab in the afternoon would find no cookie at all and go
+// browser after one interval, so returning to a tab in the afternoon would find no cookie at all and go
 // through the sign-in again, with a perfectly good session sitting in the store.
 func (m *Manager) setSessionCookie(w http.ResponseWriter, r *http.Request, sid string, deadline time.Time) {
-	// Exp is left an hour out even on a session close to its deadline. Narrowing it would end nothing
-	// sooner, since the deadline is compared on every request anyway, and it would drop the last hour of
-	// such a session into the refresh window, where each request reads the store once more.
-	state := sessionState{SID: sid, Exp: time.Now().Add(sessionTTL).Unix()}
+	// Exp is left one interval out even on a session close to its deadline. Narrowing it would end nothing
+	// sooner, since the deadline is compared on every request anyway, and it would drop the last half
+	// interval of such a session into the refresh window, where each request reads the store once more.
+	state := sessionState{SID: sid, Exp: time.Now().Add(m.revalidateEvery).Unix()}
 	// MaxAge follows a deadline because that works in both directions: at the idle TTL, a week-long
 	// session would lose its cookie after a day idle, and a two-hour one would keep it a day after it had
 	// stopped being worth anything.
