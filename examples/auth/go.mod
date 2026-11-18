@@ -3,7 +3,7 @@ module github.com/at-orz/x/examples/auth
 go 1.26.0
 
 require (
-	github.com/at-orz/x/auth v0.0.0-20261118092913-cf78fbd39aa9
+	github.com/at-orz/x/auth v0.0.0-20261118102519-53ce36a7c343
 	github.com/at-orz/x/auth/store/etcd v0.0.0-20261118092913-cf78fbd39aa9
 	github.com/chromedp/cdproto v0.160.1
 	github.com/chromedp/chromedp v0.24.0
