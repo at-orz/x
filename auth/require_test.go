@@ -908,3 +908,114 @@ func TestTheLiveSetUnderConcurrentEvents(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// Optional admits as Require does and differs only where Require would refuse: the request is served
+// without a session instead.
+func TestOptional(t *testing.T) {
+	page := func() *http.Request { return httptest.NewRequest(http.MethodGet, "/", nil) }
+
+	t.Run("no cookie", func(t *testing.T) {
+		h := newHarness(t)
+		for name, r := range map[string]*http.Request{"browser": page(), "program": func() *http.Request {
+			r := page()
+			r.Header.Set("Accept", "application/json")
+			return r
+		}()} {
+			w, _, ok := h.optional(r, nil)
+			if w.Code != http.StatusOK || ok {
+				t.Errorf("%s: status = %d, session = %t, want 200 without one", name, w.Code, ok)
+			}
+			if len(w.Result().Cookies()) != 0 {
+				t.Errorf("%s: a cookie was set: %v", name, w.Result().Cookies())
+			}
+		}
+		if h.logs.String() != "" {
+			t.Errorf("an anonymous visit was logged: %s", h.logs)
+		}
+	})
+
+	t.Run("valid cookie", func(t *testing.T) {
+		h := newHarness(t)
+		c, sid := h.signIn(t)
+		before := len(h.logs.String())
+		w, sess, ok := h.optional(page(), c)
+		if w.Code != http.StatusOK || !ok || sess.ID != sid || sess.Identity.Subject != "alice" {
+			t.Fatalf("status = %d, session = %+v (%t), want alice's", w.Code, sess, ok)
+		}
+		if len(w.Result().Cookies()) != 0 {
+			t.Errorf("a cookie was set: %v", w.Result().Cookies())
+		}
+		if logged := h.logs.String()[before:]; logged != "" {
+			t.Errorf("a valid session was logged: %s", logged)
+		}
+	})
+
+	t.Run("cookie in the refresh window", func(t *testing.T) {
+		h := newHarness(t)
+		_, sid := h.signIn(t)
+		h.age(t, sid, time.Hour)
+		w, sess, ok := h.optional(page(), h.cookieAt(t, sid, 10*time.Minute))
+		if !ok || sess.ID != sid {
+			t.Fatalf("status = %d, session = %+v (%t), want the revalidated one", w.Code, sess, ok)
+		}
+		if h.method.callCount() != 1 {
+			t.Errorf("the method was asked %d times, want 1", h.method.callCount())
+		}
+		if sessionCookieOf(h.m, w) == nil {
+			t.Error("the revalidation handed back no new cookie")
+		}
+	})
+
+	t.Run("forged cookie", func(t *testing.T) {
+		h := newHarness(t)
+		c, _ := h.signIn(t)
+		forged := &http.Cookie{Name: c.Name, Value: c.Value[:len(c.Value)-2] + "xx"}
+		w, _, ok := h.optional(page(), forged)
+		if w.Code != http.StatusOK || ok {
+			t.Errorf("status = %d, session = %t, want 200 without one", w.Code, ok)
+		}
+		if !strings.Contains(h.logs.String(), "a session was refused") {
+			t.Errorf("the forged cookie left no trace: %s", h.logs)
+		}
+	})
+
+	t.Run("deadline passed", func(t *testing.T) {
+		h := newHarness(t)
+		_, sid := h.signIn(t)
+		w, _, ok := h.optional(page(), h.cookieWith(t, sessionState{SID: sid, Exp: time.Now().Add(sessionTTL).Unix(),
+			Deadline: time.Now().Add(-time.Minute).Unix()}))
+		if w.Code != http.StatusOK || ok {
+			t.Errorf("status = %d, session = %t, want 200 without one", w.Code, ok)
+		}
+		if !cookieCleared(h.m, w) {
+			t.Error("the browser was left holding the cookie of a session that has ended")
+		}
+	})
+
+	t.Run("Authorize refuses", func(t *testing.T) {
+		h := newHarness(t)
+		c, _ := h.signIn(t)
+		h.allow("bob")
+		w, _, ok := h.optional(page(), c)
+		if w.Code != http.StatusOK || ok {
+			t.Errorf("status = %d, session = %t, want 200 without one", w.Code, ok)
+		}
+		if cookieCleared(h.m, w) {
+			t.Error("a refusal by the policy cleared the cookie")
+		}
+	})
+
+	t.Run("store unreadable for an unseen session", func(t *testing.T) {
+		h := newHarness(t)
+		_, sid := h.signIn(t)
+		h.store.setBroken(errUnreachableStore)
+		cold := newHarnessOn(t, h.store, nil)
+		w, _, ok := cold.optional(page(), cold.cookieAt(t, sid, sessionTTL))
+		if w.Code != http.StatusOK || ok {
+			t.Errorf("status = %d, session = %t, want 200 without one", w.Code, ok)
+		}
+		if !strings.Contains(cold.logs.String(), "a session could not be looked up") {
+			t.Errorf("the outage was not logged: %s", cold.logs)
+		}
+	})
+}

@@ -24,3 +24,5 @@
 - `auth`: `POST /auth/logout` sends a browser on with `303 See Other` to the on-site path in `ret`
   (form body or query string), or to `/`, so a plain HTML form can sign out. A request accepting JSON
   still gets `204`. A POST from another site is refused with `403 cross_origin_request`.
+- `auth`: `Manager.Optional` serves a request with or without a session, so a public page can show
+  who is signed in; it admits, revalidates and clears cookies as `Require` does.

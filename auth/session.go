@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Session is the signed-in identity of a request, as Require hands it on.
+// Session is the signed-in identity of a request, as Require and Optional hand it on.
 //
 // A handler that keeps a connection open past its request (a WebSocket) keeps the Session and asks
 // Manager.Alive about it on every keepalive, which is the only way a connection already open learns
@@ -22,14 +22,15 @@ type Session struct {
 
 type sessionKey struct{}
 
-// SessionFrom reads the session Require admitted the request on.
+// SessionFrom reads the session Require or Optional admitted the request on. Behind Optional, ok is
+// false for a request served without one.
 func SessionFrom(ctx context.Context) (Session, bool) {
 	s, ok := ctx.Value(sessionKey{}).(Session)
 	return s, ok
 }
 
-// WithSession is what Require carries the session forward on. It is exported so that the tests of a
-// host's handlers can seat a session without signing anyone in.
+// WithSession is what Require and Optional carry the session forward on. It is exported so that the
+// tests of a host's handlers can seat a session without signing anyone in.
 func WithSession(ctx context.Context, s Session) context.Context {
 	return context.WithValue(ctx, sessionKey{}, s)
 }

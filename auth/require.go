@@ -35,6 +35,25 @@ func (m *Manager) Require(next http.Handler) http.Handler {
 	})
 }
 
+// Optional admits a request on a valid session as Require does, handing the Session on in its context
+// (SessionFrom), and otherwise serves it without one where Require would refuse it. It is for a page
+// that serves everybody and shows more to a signed-in visitor.
+//
+// Whatever Require writes on the way in it writes here too: a renewed session cookie, or the clearing of
+// an ended one. A session store that cannot be read, which Require answers with 503, is served as no
+// session.
+func (m *Manager) Optional(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, err := m.authenticate(w, r)
+		if err != nil {
+			m.logRefusal(r, err)
+			next.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(WithSession(r.Context(), sess)))
+	})
+}
+
 // authenticate opens the cookie, finds whose session it is, revalidates once the cookie is close enough
 // to its end, and asks Authorize.
 func (m *Manager) authenticate(w http.ResponseWriter, r *http.Request) (Session, error) {
@@ -156,16 +175,23 @@ func (m *Manager) Alive(ctx context.Context, s Session) bool {
 	return m.authorize(ctx, id) == nil
 }
 
-func (m *Manager) unauthenticated(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, ErrStoreUnavailable) {
+// logRefusal records why a request arrived without a session, unless it simply carried no cookie.
+func (m *Manager) logRefusal(r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrStoreUnavailable):
 		m.log.Error("a session could not be looked up", "err", err, "remote", r.RemoteAddr)
-		m.Fail(w, http.StatusServiceUnavailable, "session_store_unavailable", web.LoginFailedRetry)
-		return
-	}
-	if !errors.Is(err, errNoSession) {
+	case !errors.Is(err, errNoSession):
 		// The refusal is only here, so without this line a cookie that failed to verify and an account
 		// taken off the policy would both leave no trace at all.
 		m.log.Warn("a session was refused", "reason", err, "remote", r.RemoteAddr)
+	}
+}
+
+func (m *Manager) unauthenticated(w http.ResponseWriter, r *http.Request, err error) {
+	m.logRefusal(r, err)
+	if errors.Is(err, ErrStoreUnavailable) {
+		m.Fail(w, http.StatusServiceUnavailable, "session_store_unavailable", web.LoginFailedRetry)
+		return
 	}
 	// A redirect is meaningless to both of these: a program gets a login page where it expected JSON, and
 	// a WebSocket handshake never follows one, leaving the page with nothing but a failed connection. A

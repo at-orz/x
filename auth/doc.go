@@ -5,8 +5,8 @@
 // How a person signs in is up to a [Method], each registered with a [Manager] under a unique name.
 // Package auth/oidc signs in through one OpenID Connect provider (register one per provider), and
 // package auth/mint redeems a one-time ticket issued on the host. Every method issues the same kind of
-// session — the same cookie, the same record, the same [Manager.Require] — so the rest of a host never
-// asks how a session began.
+// session — the same cookie, the same record, the same [Manager.Require] and [Manager.Optional] — so
+// the rest of a host never asks how a session began.
 //
 // Records live in a [Store]: auth/store/memory keeps them in one process, auth/store/etcd (a module of
 // its own) shares them between instances, and auth/store/storetest is the contract any other

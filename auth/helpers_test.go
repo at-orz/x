@@ -355,6 +355,24 @@ func (h *harness) serve(r *http.Request, cookie *http.Cookie) *httptest.Response
 	return w
 }
 
+// optional sends one request through Optional and reports the response and the session the handler saw,
+// ok false when it saw none. The handler always answers 200, so any other status is Optional's own.
+func (h *harness) optional(r *http.Request, cookie *http.Cookie) (*httptest.ResponseRecorder, Session, bool) {
+	var (
+		got Session
+		ok  bool
+	)
+	public := h.m.Optional(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, ok = SessionFrom(r.Context())
+	}))
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	public.ServeHTTP(w, r)
+	return w, got, ok
+}
+
 // sessionOfRequest runs one request and returns the Session the handler saw.
 func (h *harness) sessionOfRequest(t *testing.T, cookie *http.Cookie) Session {
 	t.Helper()
