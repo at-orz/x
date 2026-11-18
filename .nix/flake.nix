@@ -28,6 +28,11 @@
               pkgs.dex-oidc
               pkgs.chromium
             ];
+            # Chromium aborts when fontconfig finds no configuration, which a minimal host lacks.
+            env = [{
+              name = "FONTCONFIG_FILE";
+              value = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+            }];
           }];
         };
       });

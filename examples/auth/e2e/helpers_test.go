@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,6 +106,17 @@ func (c *client) follow(r response) response {
 	return r
 }
 
+// signingIn serializes the sign-ins of each user. Dex keeps one offline session per user and client,
+// and of two sign-ins of one user finishing at once it fails one with a conflicting update, so tests
+// running in parallel take turns at signing a user in, and only at that.
+var signingIn sync.Map
+
+func lockUser(u stack.User) (unlock func()) {
+	mu, _ := signingIn.LoadOrStore(u.Email, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
 var loginForm = regexp.MustCompile(`<form method="post" action="([^"]+)"`)
 
 // pageNonce is the ticket the confirm page posts back.
@@ -114,6 +126,7 @@ var pageNonce = regexp.MustCompile(`name="t" value="([^"]+)"`)
 // the app ends on.
 func (c *client) login(base, path string, user stack.User) response {
 	c.t.Helper()
+	defer lockUser(user)()
 	form := c.follow(c.get(base + path))
 	m := loginForm.FindStringSubmatch(form.body)
 	if m == nil {

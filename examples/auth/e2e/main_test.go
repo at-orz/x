@@ -52,6 +52,12 @@ func run(m *testing.M) int {
 	}
 	defer s.Stop()
 	shared = s
+	stop, err := startBrowser(s)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: starting chromium:", err)
+		return 1
+	}
+	defer stop()
 	return m.Run()
 }
 

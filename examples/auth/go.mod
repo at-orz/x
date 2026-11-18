@@ -5,6 +5,8 @@ go 1.26.0
 require (
 	github.com/at-orz/x/auth v0.0.0-20261118092913-cf78fbd39aa9
 	github.com/at-orz/x/auth/store/etcd v0.0.0-20261118092913-cf78fbd39aa9
+	github.com/chromedp/cdproto v0.160.1
+	github.com/chromedp/chromedp v0.24.0
 	github.com/coder/websocket v1.8.15
 	go.etcd.io/etcd/client/v3 v3.7.3
 )
@@ -12,6 +14,7 @@ require (
 require (
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	go.etcd.io/etcd/api/v3 v3.7.3 // indirect
