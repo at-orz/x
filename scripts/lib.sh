@@ -33,13 +33,31 @@ workspace_modules() {
 		sed 's|^\./||' | sort
 }
 
+# tree_files prints, NUL-terminated and relative to the repo root, the files
+# matching the given pathspecs that git sees in the working tree: tracked, plus
+# untracked and not ignored. That makes .gitignore the one list of what a scan
+# skips, so agent worktrees, scratch space and the like drop out without being
+# named here. Untracked files stay in because a module or file added but not
+# yet committed is exactly what the checks must catch. --cached still lists a
+# tracked file deleted from the working tree; the -f test drops it, so a
+# removed module is not reported as on disk and gofmt is not handed a missing
+# path.
+tree_files() {
+	local f
+	git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard -- "$@" |
+		while IFS= read -r -d '' f; do
+			[[ -f $REPO_ROOT/$f ]] && printf '%s\0' "$f"
+		done
+	return 0
+}
+
 # disk_modules prints every directory holding a go.mod that should be in the
-# workspace: everything except repo tooling, scratch space and testdata.
+# workspace: every go.mod git sees (see tree_files), except repo tooling and
+# testdata.
 disk_modules() {
-	(cd "$REPO_ROOT" && find . -name go.mod \
-		-not -path './.tmp/*' -not -path './.direnv/*' -not -path './internal/tools/*' \
-		-not -path '*/testdata/*') |
-		sed 's|^\./||; s|/go.mod$||' | sort
+	tree_files ':(glob)**/go.mod' | tr '\0' '\n' |
+		grep -v -e '^internal/tools/go\.mod$' -e '^testdata/' -e '/testdata/' |
+		sed 's|/go.mod$||' | sort
 }
 
 # workspace_go_version prints the go line of go.work: the repo-wide floor.

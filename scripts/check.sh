@@ -45,7 +45,7 @@ for m in "${modules[@]}"; do
 done
 
 step "4 gofmt"
-unformatted=$(find . -name '*.go' -not -path './.tmp/*' -not -path './.direnv/*' -print0 | xargs -0 -r gofmt -l) ||
+unformatted=$(tree_files ':(glob)**/*.go' | xargs -0 -r gofmt -l) ||
 	fail "4 gofmt" "gofmt could not parse some files (errors above)"
 [[ -z $unformatted ]] || fail "4 gofmt" "not gofmt-ed (run gofmt -w):"$'\n'"$unformatted"
 
