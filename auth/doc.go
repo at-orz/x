@@ -8,9 +8,9 @@
 // session — the same cookie, the same record, the same [Manager.Require] and [Manager.Optional] — so
 // the rest of a host never asks how a session began.
 //
-// Records live in a [Store]: auth/store/memory keeps them in one process, auth/store/etcd (a module of
-// its own) shares them between instances, and auth/store/storetest is the contract any other
-// implementation runs.
+// Records live in a [Store]: auth/store/memory keeps them in one process, auth/store/etcd and
+// auth/store/postgres (each a module of its own) share them between instances, and auth/store/storetest
+// is the contract any other implementation runs.
 //
 // The boundary is deliberate. A session belongs to an [Identity], a subject as one provider names it;
 // linking several identities to one user of the host is the host's job, and [Session.Values] is where

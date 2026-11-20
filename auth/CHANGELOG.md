@@ -30,3 +30,4 @@
   who is signed in; it admits, revalidates and clears cookies as `Require` does.
 - `auth/oidc`: `AllowEmails`, an allow list of verified `email` claims for a provider whose `sub` is
   opaque, matched without regard to case.
+- `auth`: the package comment names `auth/store/postgres`.

@@ -3,5 +3,6 @@ go 1.26.0
 use (
 	./auth
 	./auth/store/etcd
+	./auth/store/postgres
 	./examples/auth
 )
