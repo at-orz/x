@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The devshell rather than setup-go: Go, etcd and the C compiler come from
-  # the same flake.lock as on a developer machine.
+  # The devshell rather than setup-go: Go, etcd, PostgreSQL and the C compiler
+  # come from the same flake.lock as on a developer machine.
   checks:
     runs-on: ubuntu-24.04
     steps:
@@ -36,8 +36,8 @@ jobs:
           if-no-files-found: ignore
 
   # Proves the go line is a real floor: every module is tested with exactly
-  # that Go release, never a newer toolchain. No etcd here, so tests that need
-  # it skip, as intended.
+  # that Go release, never a newer toolchain. No etcd or PostgreSQL here, so
+  # tests that need them skip, as intended.
   min-go:
     runs-on: ubuntu-24.04
     env:

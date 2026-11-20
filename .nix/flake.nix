@@ -23,6 +23,7 @@
               pkgs.go
               pkgs.gopls
               pkgs.etcd
+              pkgs.postgresql
               pkgs.gcc
               pkgs.shellcheck
               pkgs.dex-oidc
